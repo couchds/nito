@@ -1,7 +1,7 @@
 from bpy.types import Panel
 
 from .constants import FK_FIELDS, IK_FIELDS, LEG_LABELS, LEG_ORDER
-from .rig_utils import active_armature
+from .rig_utils import active_armature, resolve_leg_modes
 
 
 class QWG_PT_panel(Panel):
@@ -38,18 +38,7 @@ class QWG_PT_panel(Panel):
         box.prop(settings, "gait")
         box.prop(settings, "generation_mode")
 
-        box = layout.box()
-        box.label(text="Motion")
-        box.prop(settings, "stride_length")
-        box.prop(settings, "step_height")
-        box.prop(settings, "body_bob")
-        box.prop(settings, "body_sway")
-        row = box.row(align=True)
-        row.prop(settings, "body_pitch")
-        row.prop(settings, "body_roll")
-        row = box.row(align=True)
-        row.prop(settings, "fk_swing_degrees")
-        row.prop(settings, "fk_lift_degrees")
+        self._draw_motion(layout, settings, armature)
 
         box = layout.box()
         box.label(text="Axes")
@@ -57,7 +46,9 @@ class QWG_PT_panel(Panel):
         row.prop(settings, "forward_axis")
         row.prop(settings, "side_axis")
         row.prop(settings, "up_axis")
-        box.prop(settings, "fk_bend_axis")
+        fk_axis = box.row()
+        fk_axis.enabled = self._has_fk_legs(armature, settings)
+        fk_axis.prop(settings, "fk_bend_axis")
 
         box = layout.box()
         box.label(text="Output")
@@ -66,6 +57,30 @@ class QWG_PT_panel(Panel):
         box.prop(settings, "interpolation")
 
         self._draw_mapping(layout, settings, armature)
+
+    def _draw_motion(self, layout, settings, armature):
+        """Draw context-aware motion controls."""
+        box = layout.box()
+        box.label(text="Foot Motion")
+        box.prop(settings, "stride_length")
+        box.prop(settings, "step_height")
+
+        box = layout.box()
+        box.label(text="Body Motion")
+        box.prop(settings, "body_bob")
+        box.prop(settings, "body_sway")
+        box.prop(settings, "body_pitch")
+        box.prop(settings, "body_roll")
+
+        box = layout.box()
+        box.label(text="FK Legs")
+        box.enabled = self._has_fk_legs(armature, settings)
+        box.prop(settings, "fk_swing_degrees")
+        box.prop(settings, "fk_lift_degrees")
+
+    def _has_fk_legs(self, armature, settings):
+        """Return whether the current settings will animate any FK chains."""
+        return any(mode == "FK" for mode in resolve_leg_modes(armature, settings).values())
 
     def _draw_mapping(self, layout, settings, armature):
         """Draw body, IK, and FK bone mapping controls."""

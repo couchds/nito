@@ -135,6 +135,9 @@ class QWG_OT_generate_walk_cycle(Operator):
             settings.interpolation,
             data_paths,
         )
+        context.scene.frame_start = settings.frame_start
+        context.scene.frame_end = settings.frame_end
+        context.scene.frame_set(settings.frame_start)
 
         self.report({"INFO"}, f"Generated {gait.label.lower()} cycle on {armature.name}.")
         return {"FINISHED"}

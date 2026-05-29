@@ -86,7 +86,7 @@ class QWG_Settings(PropertyGroup):
     step_height: FloatProperty(
         name="Lift",
         description="Vertical foot lift during the swing phase",
-        default=0.18,
+        default=0.22,
         min=0.0,
         soft_max=2.0,
         unit="LENGTH",

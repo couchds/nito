@@ -253,8 +253,8 @@ def create_standard_quadruped(context, name, scale=1.0, add_ik_constraints=True,
         add_edit_bone(
             bones,
             names["ik"],
-            (x, ankle_y - 0.10, ankle_z),
-            (x, ankle_y + 0.12, ankle_z),
+            (x, toe_y - 0.11, toe_z),
+            (x, toe_y + 0.11, toe_z),
             scale,
             root,
             deform=False,
@@ -276,13 +276,13 @@ def create_standard_quadruped(context, name, scale=1.0, add_ik_constraints=True,
     if add_ik_constraints:
         for leg in LEG_ORDER:
             names = STANDARD_LEG_NAMES[leg]
-            constraint = armature_object.pose.bones[names["lower"]].constraints.new(type="IK")
+            constraint = armature_object.pose.bones[names["foot"]].constraints.new(type="IK")
             constraint.name = "QWalk IK"
             constraint.target = armature_object
             constraint.subtarget = names["ik"]
             constraint.pole_target = armature_object
             constraint.pole_subtarget = names["pole"]
-            constraint.chain_count = 2
+            constraint.chain_count = 3
             constraint.iterations = 24
 
     assign_control_shapes(context, armature_object, scale)

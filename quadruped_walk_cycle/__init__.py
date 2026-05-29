@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Quadruped Walk Cycle Generator",
     "author": "couchds",
-    "version": (0, 1, 1),
+    "version": (0, 1, 3),
     "blender": (3, 6, 0),
     "location": "View3D > Sidebar > QWalk",
     "description": "Generate looping quadruped walk cycles for an armature using IK controls or FK leg chains.",
