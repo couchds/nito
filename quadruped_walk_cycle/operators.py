@@ -20,6 +20,11 @@ from .rig_utils import (
     remove_keys_in_range,
     resolve_leg_modes,
     rotation_offset,
+    store_base_pose,
+    stored_location,
+    stored_object_location,
+    stored_object_rotation,
+    stored_rotation,
 )
 
 
@@ -143,10 +148,10 @@ class QWG_OT_generate_walk_cycle(Operator):
         return {"FINISHED"}
 
     def _capture_baselines(self, armature, settings):
-        """Capture current object and mapped-bone transforms."""
+        """Read stable base transforms for object and mapped bones."""
         baselines = {
-            "object_location": armature.location.copy(),
-            "object_rotation": armature.rotation_euler.copy(),
+            "object_location": stored_object_location(armature),
+            "object_rotation": stored_object_rotation(armature),
             "bones": {},
         }
 
@@ -155,8 +160,8 @@ class QWG_OT_generate_walk_cycle(Operator):
             if bone:
                 ensure_euler(bone)
                 baselines["bones"][name] = {
-                    "location": bone.location.copy(),
-                    "rotation": bone.rotation_euler.copy(),
+                    "location": stored_location(bone, bone.location),
+                    "rotation": stored_rotation(bone, bone.rotation_euler),
                 }
 
         return baselines
@@ -266,4 +271,24 @@ class QWG_OT_clear_cycle_keys(Operator):
         data_paths = data_paths_for_cleanup(settings, mode_by_leg)
         remove_keys_in_range(armature.animation_data.action, data_paths, settings.frame_start, settings.frame_end)
         self.report({"INFO"}, "Cleared mapped keys in the generated frame range.")
+        return {"FINISHED"}
+
+
+class QWG_OT_set_base_pose(Operator):
+    bl_idname = "qwg.set_base_pose"
+    bl_label = "Set Base Pose"
+    bl_description = "Use the current mapped transforms as the base pose for future walk generation"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        """Enable the operator only when an armature is selected."""
+        return active_armature(context) is not None
+
+    def execute(self, context):
+        """Store current mapped transforms as the generation baseline."""
+        armature = active_armature(context)
+        settings = context.scene.qwg_settings
+        store_base_pose(armature, mapped_bones(settings))
+        self.report({"INFO"}, "Stored current mapped transforms as the QWalk base pose.")
         return {"FINISHED"}

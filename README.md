@@ -65,6 +65,7 @@ New generated rigs open in Pose Mode with the main animation controls selected. 
 ## Notes
 
 - **Replace Keys** removes existing location/Euler rotation keys on mapped bones only inside the selected frame range.
+- **Set Base Pose** stores the current mapped transforms as the neutral pose used by future generations.
 - IK mode only moves target/control bones. Your rig's IK constraints still determine the final limb bending.
 - FK mode is intentionally generic. It gives a usable blocking pass, but animal-specific polish usually still needs animator cleanup.
 - `FK Swing`, `FK Lift`, and `FK Bend` only apply when the current mode resolves to FK. The panel disables them when the mapped rig is using IK.

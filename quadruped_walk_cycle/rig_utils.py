@@ -1,5 +1,10 @@
 from .constants import FK_FIELDS, IK_FIELDS, LEG_ORDER
 
+BASE_LOCATION_PROP = "qwg_base_location"
+BASE_ROTATION_PROP = "qwg_base_rotation_euler"
+BASE_OBJECT_LOCATION_PROP = "qwg_base_object_location"
+BASE_OBJECT_ROTATION_PROP = "qwg_base_object_rotation_euler"
+
 
 def active_armature(context):
     """Return the active object when it is an armature."""
@@ -86,6 +91,57 @@ def mapped_bones(settings):
         for field in fields:
             names.add(getattr(settings, field))
     return {name for name in names if name}
+
+
+def _values_as_list(values):
+    """Return a plain float list for ID-property storage."""
+    return [float(values[index]) for index in range(3)]
+
+
+def _prop_or_current(owner, prop_name, current):
+    """Return a stored vector-like property, creating it when missing."""
+    if prop_name not in owner:
+        owner[prop_name] = _values_as_list(current)
+    return owner[prop_name]
+
+
+def stored_location(owner, current):
+    """Return the stored base location for an object or pose bone."""
+    return current.__class__(_prop_or_current(owner, BASE_LOCATION_PROP, current))
+
+
+def stored_rotation(owner, current):
+    """Return the stored base Euler rotation for an object or pose bone."""
+    return current.__class__(_prop_or_current(owner, BASE_ROTATION_PROP, current), current.order)
+
+
+def stored_object_location(armature):
+    """Return the stored base object location, creating it when missing."""
+    if BASE_OBJECT_LOCATION_PROP not in armature:
+        armature[BASE_OBJECT_LOCATION_PROP] = _values_as_list(armature.location)
+    return armature.location.__class__(armature[BASE_OBJECT_LOCATION_PROP])
+
+
+def stored_object_rotation(armature):
+    """Return the stored base object rotation, creating it when missing."""
+    if BASE_OBJECT_ROTATION_PROP not in armature:
+        armature[BASE_OBJECT_ROTATION_PROP] = _values_as_list(armature.rotation_euler)
+    return armature.rotation_euler.__class__(armature[BASE_OBJECT_ROTATION_PROP], armature.rotation_euler.order)
+
+
+def store_base_pose(armature, bone_names=None):
+    """Store the current object and mapped pose-bone transforms as the base pose."""
+    armature[BASE_OBJECT_LOCATION_PROP] = _values_as_list(armature.location)
+    armature[BASE_OBJECT_ROTATION_PROP] = _values_as_list(armature.rotation_euler)
+
+    names = set(bone_names) if bone_names is not None else {bone.name for bone in armature.pose.bones}
+    for name in names:
+        bone = pose_bone(armature, name)
+        if not bone:
+            continue
+        ensure_euler(bone)
+        bone[BASE_LOCATION_PROP] = _values_as_list(bone.location)
+        bone[BASE_ROTATION_PROP] = _values_as_list(bone.rotation_euler)
 
 
 def action_fcurve_collections(action):

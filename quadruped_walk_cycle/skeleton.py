@@ -5,6 +5,7 @@ from math import cos, sin
 from mathutils import Vector
 
 from .constants import FK_FIELDS, IK_FIELDS, LEG_ORDER
+from .rig_utils import store_base_pose
 
 
 STANDARD_LEG_NAMES = {
@@ -272,6 +273,7 @@ def create_standard_quadruped(context, name, scale=1.0, add_ik_constraints=True,
     bpy.ops.object.mode_set(mode="POSE")
     for pose_bone in armature_object.pose.bones:
         pose_bone.rotation_mode = "XYZ"
+    store_base_pose(armature_object)
 
     if add_ik_constraints:
         for leg in LEG_ORDER:

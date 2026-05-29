@@ -28,6 +28,7 @@ class QWG_PT_panel(Panel):
         row.operator("qwg.generate_walk_cycle", icon="ARMATURE_DATA")
 
         layout.operator("qwg.clear_cycle_keys", icon="TRASH")
+        layout.operator("qwg.set_base_pose", icon="PINNED")
 
         box = layout.box()
         box.label(text="Cycle")
