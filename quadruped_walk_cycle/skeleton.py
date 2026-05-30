@@ -39,6 +39,38 @@ STANDARD_LEG_NAMES = {
     },
 }
 
+GUIDE_LEG_BONES = {
+    "fl": {
+        "upper": "qwg_guide_front_left_upper",
+        "lower": "qwg_guide_front_left_lower",
+        "foot": "qwg_guide_front_left_foot",
+    },
+    "fr": {
+        "upper": "qwg_guide_front_right_upper",
+        "lower": "qwg_guide_front_right_lower",
+        "foot": "qwg_guide_front_right_foot",
+    },
+    "rl": {
+        "upper": "qwg_guide_rear_left_upper",
+        "lower": "qwg_guide_rear_left_lower",
+        "foot": "qwg_guide_rear_left_foot",
+    },
+    "rr": {
+        "upper": "qwg_guide_rear_right_upper",
+        "lower": "qwg_guide_rear_right_lower",
+        "foot": "qwg_guide_rear_right_foot",
+    },
+}
+
+GUIDE_SPINE_BONES = {
+    "pelvis": "qwg_guide_pelvis",
+    "spine": "qwg_guide_spine",
+    "chest": "qwg_guide_chest",
+    "neck": "qwg_guide_neck",
+    "head": "qwg_guide_head",
+    "tail": "qwg_guide_tail",
+}
+
 QUADRUPED_PROFILES = {
     "MEDIUM": {
         "label": "Medium Quadruped",
@@ -631,6 +663,16 @@ def active_mesh(context):
     return None
 
 
+def active_guide_armature(context):
+    """Return the active QWalk guide armature, or the first selected guide."""
+    if context.object and context.object.type == "ARMATURE" and context.object.get("qwg_is_guide"):
+        return context.object
+    for obj in context.selected_objects:
+        if obj.type == "ARMATURE" and obj.get("qwg_is_guide"):
+            return obj
+    return None
+
+
 def add_edit_bone(edit_bones, name, head, tail, scale, parent=None, connected=False, deform=True):
     """Create an edit bone with common parent and deform settings."""
     bone = edit_bones.new(name)
@@ -640,6 +682,225 @@ def add_edit_bone(edit_bones, name, head, tail, scale, parent=None, connected=Fa
     bone.use_connect = connected
     bone.use_deform = deform
     return bone
+
+
+def world_point_from_fit(point, origin, angle):
+    """Convert a fit-space profile point to world space."""
+    return rotate_z(origin + Vector(point), angle)
+
+
+def profile_side_point(profile, leg_key, point_key, side):
+    """Return a profile leg point with left or right X applied."""
+    width_key = "leg_width_front" if leg_key == "front_leg" else "leg_width_rear"
+    return mirrored_point(profile[leg_key][point_key], side * profile[width_key])
+
+
+def create_guide_bone(edit_bones, name, head, tail, parent=None, connected=False):
+    """Create a non-deforming guide bone."""
+    bone = edit_bones.new(name)
+    bone.head = Vector(head)
+    bone.tail = Vector(tail)
+    bone.parent = parent
+    bone.use_connect = connected
+    bone.use_deform = False
+    return bone
+
+
+def create_guide_armature(context, name, profile, origin, angle, source_mesh_name="", profile_key="MEDIUM"):
+    """Create an editable QWalk guide armature from a fitted profile."""
+    if context.object and context.object.mode != "OBJECT":
+        bpy.ops.object.mode_set(mode="OBJECT")
+
+    data = bpy.data.armatures.new(name)
+    guide = bpy.data.objects.new(name, data)
+    guide["qwg_is_guide"] = True
+    guide["qwg_profile"] = profile_key
+    guide["qwg_source_mesh"] = source_mesh_name
+    guide.show_in_front = True
+    data.display_type = "STICK"
+    context.collection.objects.link(guide)
+
+    bpy.ops.object.select_all(action="DESELECT")
+    guide.select_set(True)
+    context.view_layer.objects.active = guide
+    guide.location = rotate_z(origin, angle)
+    guide.rotation_euler.z = angle
+
+    bpy.ops.object.mode_set(mode="EDIT")
+    bones = data.edit_bones
+
+    pelvis = create_guide_bone(bones, GUIDE_SPINE_BONES["pelvis"], profile["spine"][0][1], profile["spine"][0][2])
+    spine = create_guide_bone(bones, GUIDE_SPINE_BONES["spine"], profile["spine"][1][1], profile["spine"][1][2], pelvis, True)
+    chest = create_guide_bone(bones, GUIDE_SPINE_BONES["chest"], profile["spine"][2][1], profile["spine"][2][2], spine, True)
+    neck = create_guide_bone(bones, GUIDE_SPINE_BONES["neck"], profile["neck"]["head"], profile["neck"]["tail"], chest, True)
+    create_guide_bone(bones, GUIDE_SPINE_BONES["head"], profile["head"]["head"], profile["head"]["tail"], neck, True)
+    create_guide_bone(bones, GUIDE_SPINE_BONES["tail"], profile["tail"][0][1], profile["tail"][-1][2], pelvis)
+
+    for leg in LEG_ORDER:
+        is_front = leg.startswith("f")
+        side = 1.0 if leg.endswith("l") else -1.0
+        leg_key = "front_leg" if is_front else "rear_leg"
+        parent = chest if is_front else pelvis
+        names = GUIDE_LEG_BONES[leg]
+        upper = create_guide_bone(
+            bones,
+            names["upper"],
+            profile_side_point(profile, leg_key, "upper_head", side),
+            profile_side_point(profile, leg_key, "upper_tail", side),
+            parent,
+        )
+        lower = create_guide_bone(
+            bones,
+            names["lower"],
+            profile_side_point(profile, leg_key, "upper_tail", side),
+            profile_side_point(profile, leg_key, "lower_tail", side),
+            upper,
+            True,
+        )
+        create_guide_bone(
+            bones,
+            names["foot"],
+            profile_side_point(profile, leg_key, "lower_tail", side),
+            profile_side_point(profile, leg_key, "foot_tail", side),
+            lower,
+            True,
+        )
+
+    for bone in bones:
+        bone.select = True
+        bone.select_head = True
+        bone.select_tail = True
+
+    return guide
+
+
+def guide_bone_pair(guide, name):
+    """Return local head and tail vectors for a guide bone."""
+    bone = guide.data.bones.get(name)
+    if not bone:
+        raise ValueError(f"Guide bone missing: {name}")
+    return bone.head_local.copy(), bone.tail_local.copy()
+
+
+def average_vectors(vectors):
+    """Return the arithmetic mean of vectors."""
+    if not vectors:
+        return Vector((0.0, 0.0, 0.0))
+    total = Vector((0.0, 0.0, 0.0))
+    for vector in vectors:
+        total += vector
+    return total / len(vectors)
+
+
+def centered_point(point, origin):
+    """Return a profile point centered on the guide origin."""
+    return (0.0, point.y - origin.y, point.z - origin.z)
+
+
+def build_profile_from_guides(guide):
+    """Build a generated rig profile from an edited QWalk guide armature."""
+    pelvis_head, pelvis_tail = guide_bone_pair(guide, GUIDE_SPINE_BONES["pelvis"])
+    spine_head, spine_tail = guide_bone_pair(guide, GUIDE_SPINE_BONES["spine"])
+    chest_head, chest_tail = guide_bone_pair(guide, GUIDE_SPINE_BONES["chest"])
+    neck_head, neck_tail = guide_bone_pair(guide, GUIDE_SPINE_BONES["neck"])
+    head_head, head_tail = guide_bone_pair(guide, GUIDE_SPINE_BONES["head"])
+    tail_head, tail_tail = guide_bone_pair(guide, GUIDE_SPINE_BONES["tail"])
+
+    center_points = [pelvis_head, pelvis_tail, spine_tail, chest_tail, neck_tail, head_tail, tail_tail]
+    leg_points = []
+    for leg in LEG_ORDER:
+        for bone_name in GUIDE_LEG_BONES[leg].values():
+            head, tail = guide_bone_pair(guide, bone_name)
+            leg_points.extend((head, tail))
+
+    foot_tails = [guide_bone_pair(guide, GUIDE_LEG_BONES[leg]["foot"])[1] for leg in LEG_ORDER]
+    midline_x = average_vectors(center_points).x
+    body_center_y = (pelvis_head.y + chest_tail.y) * 0.5
+    ground_z = min(point.z for point in foot_tails)
+    origin = Vector((midline_x, body_center_y, ground_z))
+
+    def rel(point):
+        return (point.x - origin.x, point.y - origin.y, point.z - origin.z)
+
+    def centered(point):
+        return centered_point(point, origin)
+
+    def leg_average(leg_a, leg_b, bone_key, use_tail=False):
+        index = 1 if use_tail else 0
+        point_a = guide_bone_pair(guide, GUIDE_LEG_BONES[leg_a][bone_key])[index]
+        point_b = guide_bone_pair(guide, GUIDE_LEG_BONES[leg_b][bone_key])[index]
+        average = average_vectors((point_a, point_b))
+        return Vector((origin.x, average.y, average.z))
+
+    def leg_width(leg_a, leg_b):
+        samples = []
+        for leg in (leg_a, leg_b):
+            for bone_key in ("upper", "foot"):
+                head, tail = guide_bone_pair(guide, GUIDE_LEG_BONES[leg][bone_key])
+                samples.extend((abs(head.x - origin.x), abs(tail.x - origin.x)))
+        return max(sum(samples) / len(samples), 0.001)
+
+    front_upper_head = leg_average("fl", "fr", "upper")
+    front_upper_tail = leg_average("fl", "fr", "upper", True)
+    front_lower_tail = leg_average("fl", "fr", "lower", True)
+    front_foot_tail = leg_average("fl", "fr", "foot", True)
+    rear_upper_head = leg_average("rl", "rr", "upper")
+    rear_upper_tail = leg_average("rl", "rr", "upper", True)
+    rear_lower_tail = leg_average("rl", "rr", "lower", True)
+    rear_foot_tail = leg_average("rl", "rr", "foot", True)
+
+    body_length = max(abs(chest_tail.y - pelvis_head.y), 0.1)
+    guide_points = center_points + leg_points
+    min_corner, max_corner, size = bounds_from_points(guide_points)
+    root_width = max(size.x * 0.45, 0.12)
+    control_scale = max(size.z, body_length * 0.35, 0.2)
+    label = QUADRUPED_PROFILES.get(guide.get("qwg_profile", "MEDIUM"), QUADRUPED_PROFILES["MEDIUM"])["label"]
+
+    front_leg = {
+        "anchor_parent": "chest",
+        "guide": "scapula",
+        "guide_head": centered(chest_tail),
+        "guide_tail": centered(front_upper_head),
+        "upper_head": centered(front_upper_head),
+        "upper_tail": centered(front_upper_tail),
+        "lower_tail": centered(front_lower_tail),
+        "foot_tail": centered(front_foot_tail),
+        "pole": centered(Vector((origin.x, front_upper_tail.y - body_length * 0.22, front_upper_tail.z))),
+    }
+    rear_leg = {
+        "anchor_parent": "pelvis",
+        "guide": "hip",
+        "guide_head": centered(pelvis_head),
+        "guide_tail": centered(rear_upper_head),
+        "upper_head": centered(rear_upper_head),
+        "upper_tail": centered(rear_upper_tail),
+        "lower_tail": centered(rear_lower_tail),
+        "foot_tail": centered(rear_foot_tail),
+        "pole": centered(Vector((origin.x, rear_upper_tail.y - body_length * 0.24, rear_upper_tail.z))),
+    }
+
+    profile = {
+        "label": f"{label} Guide",
+        "root": {"head": (-root_width, 0.0, 0.0), "tail": (root_width, 0.0, 0.0)},
+        "body": {"head": centered(pelvis_head), "tail": centered(chest_tail)},
+        "spine": [
+            ("pelvis", centered(pelvis_head), centered(pelvis_tail)),
+            ("spine_01", centered(spine_head), centered(spine_tail)),
+            ("chest", centered(chest_head), centered(chest_tail)),
+        ],
+        "neck": {"head": centered(neck_head), "tail": centered(neck_tail)},
+        "head": {"head": centered(head_head), "tail": centered(head_tail)},
+        "tail": [
+            ("tail_01", centered(tail_head), centered(average_vectors((tail_head, tail_tail)))),
+            ("tail_02", centered(average_vectors((tail_head, tail_tail))), centered(tail_tail)),
+        ],
+        "leg_width_front": leg_width("fl", "fr"),
+        "leg_width_rear": leg_width("rl", "rr"),
+        "front_leg": front_leg,
+        "rear_leg": rear_leg,
+        "control_scale": control_scale,
+    }
+    return profile, origin
 
 
 def get_widget_collection(context, armature_name):
@@ -1108,4 +1369,171 @@ class QWG_OT_create_fitted_quadruped_armature(Operator):
             apply_standard_mapping(context.scene.qwg_settings)
 
         self.report({"INFO"}, f"Created fitted {profile['label']} armature for {mesh_object.name}.")
+        return {"FINISHED"}
+
+
+class QWG_OT_create_fit_guides(Operator):
+    bl_idname = "qwg.create_fit_guides"
+    bl_label = "Create Fitting Guides"
+    bl_description = "Create an editable QWalk guide armature from the selected mesh"
+    bl_options = {"REGISTER", "UNDO"}
+
+    guide_name: StringProperty(
+        name="Name",
+        description="Name for the generated guide armature; leave blank to derive it from the mesh",
+        default="",
+    )
+    body_profile: EnumProperty(
+        name="Profile",
+        description="Initial guide proportions, or Auto to choose from mesh proportions",
+        items=fit_profile_items(),
+        default="AUTO",
+    )
+    mesh_forward_axis: EnumProperty(
+        name="Mesh Forward",
+        description="World axis pointing from tail toward head on the selected mesh",
+        items=(
+            ("POS_Y", "+Y", "Mesh faces toward positive Y"),
+            ("NEG_Y", "-Y", "Mesh faces toward negative Y"),
+            ("POS_X", "+X", "Mesh faces toward positive X"),
+            ("NEG_X", "-X", "Mesh faces toward negative X"),
+        ),
+        default="POS_Y",
+    )
+    fit_amount: FloatProperty(
+        name="Fit",
+        description="Fraction of the mesh bounds filled by the initial guide armature",
+        default=0.88,
+        min=0.1,
+        max=1.5,
+    )
+    robust_bounds: BoolProperty(
+        name="Robust Bounds",
+        description="Use vertex percentiles so horns, manes, fur, and tails do not dominate the initial guide fit",
+        default=True,
+    )
+    top_percentile: FloatProperty(
+        name="Top Percentile",
+        description="Upper vertical percentile used when Robust Bounds is enabled",
+        default=88.0,
+        min=60.0,
+        max=100.0,
+    )
+
+    @classmethod
+    def poll(cls, context):
+        """Enable the operator when a mesh is active or selected."""
+        return active_mesh(context) is not None
+
+    def execute(self, context):
+        """Create editable guide bones from the selected mesh."""
+        mesh_object = active_mesh(context)
+        if not mesh_object:
+            self.report({"ERROR"}, "Select a mesh to fit.")
+            return {"CANCELLED"}
+
+        fit_points, angle = mesh_points_in_fit_space(mesh_object, context, self.mesh_forward_axis)
+        _, _, mesh_size = robust_bounds_from_points(
+            fit_points,
+            robust=self.robust_bounds,
+            top_percentile=self.top_percentile,
+        )
+        profile_key = profile_from_mesh(mesh_size, "POS_Y") if self.body_profile == "AUTO" else self.body_profile
+        profile, origin, _, _, _ = build_landmark_profile(
+            fit_points,
+            profile_key,
+            self.fit_amount,
+            robust=self.robust_bounds,
+            top_percentile=self.top_percentile,
+        )
+
+        guide_name = self.guide_name.strip() or f"{mesh_object.name}_QWalk_Guides"
+        guide = create_guide_armature(
+            context,
+            guide_name,
+            profile,
+            origin,
+            angle,
+            source_mesh_name=mesh_object.name,
+            profile_key=profile_key,
+        )
+        self.report({"INFO"}, f"Created editable QWalk guides for {mesh_object.name}.")
+        return {"FINISHED"}
+
+
+class QWG_OT_create_armature_from_guides(Operator):
+    bl_idname = "qwg.create_armature_from_guides"
+    bl_label = "Generate Armature From Guides"
+    bl_description = "Generate a QWalk armature from the selected editable guide armature"
+    bl_options = {"REGISTER", "UNDO"}
+
+    armature_name: StringProperty(
+        name="Name",
+        description="Name for the generated armature; leave blank to derive it from the guides",
+        default="",
+    )
+    add_ik_constraints: BoolProperty(
+        name="Add IK Constraints",
+        description="Add IK constraints from foot bones to generated IK targets",
+        default=True,
+    )
+    display_type: EnumProperty(
+        name="Display",
+        description="Viewport display style for the generated armature",
+        items=(
+            ("STICK", "Stick", "Clean rig-style display"),
+            ("OCTAHEDRAL", "Octahedral", "Classic Blender bone shapes"),
+            ("BBONE", "B-Bone", "Thick bendy-bone shapes"),
+            ("WIRE", "Wire", "Wireframe bone shapes"),
+        ),
+        default="STICK",
+    )
+    map_after_create: BoolProperty(
+        name="Map for QWalk",
+        description="Fill QWalk bone mapping fields after creating the armature",
+        default=True,
+    )
+
+    @classmethod
+    def poll(cls, context):
+        """Enable the operator when a QWalk guide armature is active or selected."""
+        return active_guide_armature(context) is not None
+
+    def execute(self, context):
+        """Create the final QWalk armature from edited guide bones."""
+        guide = active_guide_armature(context)
+        if not guide:
+            self.report({"ERROR"}, "Select a QWalk guide armature.")
+            return {"CANCELLED"}
+        if guide.mode != "OBJECT":
+            bpy.ops.object.mode_set(mode="OBJECT")
+
+        try:
+            profile, origin = build_profile_from_guides(guide)
+        except ValueError as error:
+            self.report({"ERROR"}, str(error))
+            return {"CANCELLED"}
+
+        profile_key = guide.get("qwg_profile", "MEDIUM")
+        armature_name = self.armature_name.strip() or f"{guide.name}_Rig"
+        armature = create_standard_quadruped(
+            context,
+            armature_name,
+            1.0,
+            self.add_ik_constraints,
+            self.display_type,
+            profile_key,
+            profile_override=profile,
+        )
+        armature.location = guide.matrix_world @ origin
+        armature.rotation_euler = guide.rotation_euler
+        armature.scale = guide.scale
+        armature["qwg_guides"] = guide.name
+        armature["qwg_profile_requested"] = profile_key
+
+        store_base_pose(armature)
+        if self.map_after_create:
+            apply_standard_mapping(context.scene.qwg_settings)
+
+        self.report({"INFO"}, f"Generated QWalk armature from {guide.name}.")
         return {"FINISHED"}

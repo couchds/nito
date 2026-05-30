@@ -64,17 +64,17 @@ The starter armature is meant as a clean animation test rig and naming template,
 
 New generated rigs open in Pose Mode with the main animation controls selected. The control widgets are stored as hidden mesh objects in a `*_widgets` collection and assigned as custom bone shapes.
 
-## Mesh Fitting Phase 1
+## Mesh Fitting Guides
 
-Select a mesh and click **Create Fitted Quadruped Armature** to place a generated armature from coarse mesh landmarks. This first phase estimates the ground, main torso span, upper back surface, foot contact areas, and broad body type:
+Select a mesh and click **Create Fitting Guides** to create an editable QWalk guide armature. This is the preferred fitting workflow:
 
-- Leave `Profile` set to `Auto` for the add-on to choose Medium, Stocky, or Horse proportions from the mesh bounds.
-- Choose a specific `Profile` in the operator redo panel when you already know the animal type.
-- Choose `Mesh Forward` based on the direction from tail toward head.
-- Adjust `Fit` if the rig should sit tighter or looser inside the mesh.
-- Leave `Robust Bounds` enabled for meshes with horns, manes, fur, bulky tails, or other silhouettes that should not dominate the vertical fit. The fitter detects the main torso span before measuring the spine, so horns and head volume are less likely to pull the back line upward.
+1. Create fitting guides from the mesh.
+2. Edit the guide bones in Blender Edit Mode until the skeleton landmarks sit where you want them.
+3. Click **Generate Armature From Guides** to create the final QWalk rig.
 
-This does not bind the mesh yet. It only creates a fitted armature.
+The guide initializer still estimates the ground, main torso span, upper back surface, foot contact areas, and broad body type. Those guesses are only a starting point. The final generated armature comes from the edited guide bones, which is more reliable than trying to infer hidden shoulder, hip, knee, and ankle positions from a surface mesh alone.
+
+The older **Create Fitted Quadruped Armature** button still creates a direct one-shot fitted armature, but it is best treated as a quick draft rather than the main workflow.
 
 ## Notes
 
