@@ -18,6 +18,7 @@ from .rig_utils import (
     ensure_euler,
     keyframe_pose_bone,
     mapped_bones,
+    pose_location_for_armature_offset,
     pose_bone,
     remove_keys_in_range,
     resolve_leg_modes,
@@ -347,10 +348,11 @@ class QWG_OT_generate_walk_cycle(Operator):
             bone = armature.pose.bones[target_name]
             baseline = baselines["bones"][target_name]
             offset = axis_offset(settings.forward_axis, 0.0, settings.side_axis, sway, settings.up_axis, bob)
+            local_offset = pose_location_for_armature_offset(bone, offset)
             bone.location = baseline["location"].copy()
-            bone.location.x += offset[0]
-            bone.location.y += offset[1]
-            bone.location.z += offset[2]
+            bone.location.x += local_offset.x
+            bone.location.y += local_offset.y
+            bone.location.z += local_offset.z
 
             bone.rotation_euler = baseline["rotation"].copy()
             bone.rotation_euler[axis_index(settings.side_axis)] += pitch * axis_sign(settings.side_axis)
@@ -375,11 +377,12 @@ class QWG_OT_generate_walk_cycle(Operator):
         bone = armature.pose.bones[bone_name]
         baseline = baselines["bones"][bone_name]["location"]
         offset = axis_offset(settings.forward_axis, forward, settings.side_axis, 0.0, settings.up_axis, lift)
+        local_offset = pose_location_for_armature_offset(bone, offset)
 
         bone.location = baseline.copy()
-        bone.location.x += offset[0]
-        bone.location.y += offset[1]
-        bone.location.z += offset[2]
+        bone.location.x += local_offset.x
+        bone.location.y += local_offset.y
+        bone.location.z += local_offset.z
         keyframe_pose_bone(bone, frame, ("location",))
 
     def _animate_fk_leg(self, armature, settings, baselines, leg, frame, forward, lift, is_swing):

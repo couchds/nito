@@ -1,3 +1,5 @@
+from mathutils import Vector
+
 from .constants import FK_FIELDS, IK_FIELDS, LEG_ORDER
 
 BASE_LOCATION_PROP = "qwg_base_location"
@@ -56,6 +58,15 @@ def axis_offset(forward_axis, forward, side_axis, side, up_axis, up):
     values[axis_index(side_axis)] += side * axis_sign(side_axis)
     values[axis_index(up_axis)] += up * axis_sign(up_axis)
     return values
+
+
+def pose_location_for_armature_offset(pose_bone, offset):
+    """Return pose location channels that move a bone by an armature-space offset."""
+    vector = Vector(offset)
+    try:
+        return pose_bone.bone.matrix_local.to_3x3().inverted() @ vector
+    except (AttributeError, ValueError):
+        return vector
 
 
 def rotation_offset(base, axis_name, angle):

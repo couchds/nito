@@ -61,7 +61,7 @@ The generated rig includes:
 - Optional IK constraints from each lower-leg bone to its IK target
 
 Hidden non-deforming shoulder/hip helper bones keep the limb chains parented cleanly without becoming part of the visible deformation skeleton.
-IK and pole controls are created with their bone heads on the actual target points so Blender's IK solver does not pull the neutral pose away from the fitted skeleton.
+IK and pole controls are created with their bone heads on the actual target points so Blender's IK solver does not pull the neutral pose away from the fitted skeleton. Generated foot controls are aligned to the rig's local axes, and walk-cycle location offsets are converted from armature space into each control bone's local channels before keying.
 Generated IK constraints set a neutral pole angle so Pose Mode matches the fitted rest chain instead of twisting the leg as soon as constraints are added.
 
 The starter armature is meant as a clean animation test rig and naming template, not a production-ready anatomy rig. Use Blender's operator redo panel after creation if you want a different profile or Octahedral, B-Bone, or Wire display instead.

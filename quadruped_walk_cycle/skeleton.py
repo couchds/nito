@@ -1446,7 +1446,7 @@ def create_standard_quadruped(
             bones,
             names["ik"],
             foot_point,
-            (foot_point.x, foot_point.y, foot_point.z + foot_span),
+            (foot_point.x, foot_point.y + foot_span, foot_point.z),
             scale,
             root,
             deform=False,
