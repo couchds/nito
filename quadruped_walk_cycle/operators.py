@@ -1,6 +1,7 @@
 import math
 
 import bpy
+from bpy.props import BoolProperty, EnumProperty, IntProperty
 from bpy.types import Operator
 
 from .bone_mapping import find_best_bone
@@ -63,8 +64,30 @@ class QWG_OT_auto_map(Operator):
 class QWG_OT_bind_selected_meshes(Operator):
     bl_idname = "qwg.bind_selected_meshes"
     bl_label = "Bind Selected Meshes To Rig"
-    bl_description = "Bind selected mesh objects to the active QWalk armature using Blender automatic weights"
+    bl_description = "Bind selected mesh objects to the active QWalk armature"
     bl_options = {"REGISTER", "UNDO"}
+
+    weighting_mode: EnumProperty(
+        name="Weights",
+        description="How vertex weights are assigned during binding",
+        items=(
+            ("NEAREST", "Nearest Bones", "Assign robust QWalk weights from nearest deform bones"),
+            ("AUTOMATIC", "Blender Automatic", "Use Blender's automatic heat weighting"),
+        ),
+        default="NEAREST",
+    )
+    replace_existing_armatures: BoolProperty(
+        name="Replace Armature Modifiers",
+        description="Remove existing Armature modifiers before binding to this rig",
+        default=True,
+    )
+    max_influences: IntProperty(
+        name="Max Influences",
+        description="Maximum deform bones assigned to each vertex for nearest-bone weights",
+        default=4,
+        min=1,
+        max=8,
+    )
 
     @classmethod
     def poll(cls, context):
@@ -72,7 +95,7 @@ class QWG_OT_bind_selected_meshes(Operator):
         return active_armature(context) is not None and any(obj.type == "MESH" for obj in context.selected_objects)
 
     def execute(self, context):
-        """Parent selected meshes to the active armature with automatic weights."""
+        """Parent selected meshes to the active armature and create skin weights."""
         armature = active_armature(context)
         meshes = [obj for obj in context.selected_objects if obj.type == "MESH"]
         if not armature or not meshes:
@@ -87,19 +110,20 @@ class QWG_OT_bind_selected_meshes(Operator):
 
         bound_count = 0
         for mesh in meshes:
-            bpy.ops.object.select_all(action="DESELECT")
-            mesh.select_set(True)
-            armature.select_set(True)
-            context.view_layer.objects.active = armature
+            if self.replace_existing_armatures:
+                remove_armature_modifiers(mesh)
 
-            try:
-                result = bpy.ops.object.parent_set(type="ARMATURE_AUTO")
-            except RuntimeError as error:
-                self.report({"ERROR"}, f"Automatic weights failed for {mesh.name}: {error}")
-                continue
-
-            if result == {"FINISHED"}:
-                bound_count += 1
+            if self.weighting_mode == "AUTOMATIC":
+                if bind_with_automatic_weights(context, mesh, armature):
+                    bound_count += 1
+                else:
+                    self.report({"WARNING"}, f"Automatic weights failed for {mesh.name}.")
+            else:
+                try:
+                    bind_with_nearest_bone_weights(mesh, armature, self.max_influences)
+                    bound_count += 1
+                except RuntimeError as error:
+                    self.report({"ERROR"}, f"Nearest weights failed for {mesh.name}: {error}")
 
         bpy.ops.object.select_all(action="DESELECT")
         for mesh in meshes:
@@ -112,6 +136,96 @@ class QWG_OT_bind_selected_meshes(Operator):
 
         self.report({"INFO"}, f"Bound {bound_count} mesh object(s) to {armature.name}.")
         return {"FINISHED"}
+
+
+def bind_with_automatic_weights(context, mesh, armature):
+    """Bind one mesh to an armature using Blender automatic weights."""
+    bpy.ops.object.select_all(action="DESELECT")
+    mesh.select_set(True)
+    armature.select_set(True)
+    context.view_layer.objects.active = armature
+
+    try:
+        return bpy.ops.object.parent_set(type="ARMATURE_AUTO") == {"FINISHED"}
+    except RuntimeError:
+        return False
+
+
+def remove_armature_modifiers(mesh):
+    """Remove existing armature modifiers from a mesh."""
+    for modifier in list(mesh.modifiers):
+        if modifier.type == "ARMATURE":
+            mesh.modifiers.remove(modifier)
+
+
+def ensure_armature_modifier(mesh, armature):
+    """Create or update the QWalk armature modifier."""
+    modifier = mesh.modifiers.get("QWalk Armature")
+    if not modifier:
+        modifier = mesh.modifiers.new("QWalk Armature", "ARMATURE")
+    modifier.object = armature
+    modifier.show_viewport = True
+    modifier.show_render = True
+    return modifier
+
+
+def deform_bone_segments(armature):
+    """Return usable deform bone line segments in armature local space."""
+    segments = []
+    for bone in armature.data.bones:
+        if not bone.use_deform:
+            continue
+        head = bone.head_local.copy()
+        tail = bone.tail_local.copy()
+        if (tail - head).length <= 0.0001:
+            continue
+        segments.append((bone.name, head, tail))
+    return segments
+
+
+def distance_to_segment(point, start, end):
+    """Return distance from a point to a finite line segment."""
+    segment = end - start
+    length_sq = segment.length_squared
+    if length_sq <= 0.000001:
+        return (point - start).length
+    amount = max(0.0, min(1.0, (point - start).dot(segment) / length_sq))
+    closest = start + segment * amount
+    return (point - closest).length
+
+
+def bind_with_nearest_bone_weights(mesh, armature, max_influences):
+    """Bind one mesh using nearest deform bone segment weights."""
+    segments = deform_bone_segments(armature)
+    if not segments:
+        raise RuntimeError("The active armature has no deform bones.")
+
+    world_matrix = mesh.matrix_world.copy()
+    mesh.parent = armature
+    mesh.matrix_parent_inverse = armature.matrix_world.inverted()
+    mesh.matrix_world = world_matrix
+    ensure_armature_modifier(mesh, armature)
+
+    group_names = {name for name, _, _ in segments}
+    for name in group_names:
+        group = mesh.vertex_groups.get(name)
+        if group:
+            mesh.vertex_groups.remove(group)
+    groups = {name: mesh.vertex_groups.new(name=name) for name in group_names}
+
+    armature_inverse = armature.matrix_world.inverted()
+    influence_count = min(max_influences, len(segments))
+    for vertex in mesh.data.vertices:
+        point = armature_inverse @ (mesh.matrix_world @ vertex.co)
+        scored = sorted(
+            ((distance_to_segment(point, head, tail), name) for name, head, tail in segments),
+            key=lambda item: item[0],
+        )[:influence_count]
+        weights = [(name, 1.0 / max(distance * distance, 0.0001)) for distance, name in scored]
+        total = sum(weight for _, weight in weights) or 1.0
+        for name, weight in weights:
+            groups[name].add([vertex.index], weight / total, "REPLACE")
+    mesh.data.update()
 
 
 class QWG_OT_generate_walk_cycle(Operator):
