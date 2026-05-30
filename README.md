@@ -85,6 +85,8 @@ The sidebar button always runs with mirrored leg pairs and replacement enabled. 
 
 The guide armature is hidden by default after **Generate Armature From Guides** so the viewport shows the final rig cleanly. Unhide the guide object in the Outliner if you want to edit and regenerate.
 
+When a guide armature is selected, the QWalk panel shows the active guide bone label, such as `Head`, `Neck`, or `Front Left Hoof`, so you can tell which landmark you are placing.
+
 The older **Create Fitted Quadruped Armature** button still creates a direct one-shot fitted armature, but it is best treated as a quick draft rather than the main workflow.
 
 Binding defaults to QWalk's nearest-bone weights, which creates real vertex groups and an Armature modifier without relying on Blender's heat weighting. Use the operator redo panel if you want to try Blender Automatic instead. For production results, expect to clean up vertex weights around shoulders, hips, hooves, horns, and dense fur.

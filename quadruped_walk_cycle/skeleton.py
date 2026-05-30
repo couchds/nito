@@ -841,12 +841,12 @@ def clean_front_leg_profile(anchor_point, upper_head, foot_tail, body_length, or
     toe = Vector((origin.x, foot_tail.y, foot_tail.z))
     leg_height = max(shoulder.z - toe.z, body_length * 0.35)
 
-    if toe.y < shoulder.y + body_length * 0.08:
-        toe.y = shoulder.y + body_length * 0.18
+    toe_offset = clamp(toe.y - shoulder.y, body_length * 0.03, body_length * 0.10)
+    toe.y = shoulder.y + toe_offset
 
-    elbow = Vector((origin.x, shoulder.y - body_length * 0.08, toe.z + leg_height * 0.54))
-    wrist = Vector((origin.x, toe.y - body_length * 0.10, toe.z + leg_height * 0.22))
-    pole = Vector((origin.x, shoulder.y - body_length * 0.35, toe.z + leg_height * 0.55))
+    elbow = Vector((origin.x, shoulder.y - body_length * 0.025, toe.z + leg_height * 0.54))
+    wrist = Vector((origin.x, shoulder.y + toe_offset * 0.42, toe.z + leg_height * 0.22))
+    pole = Vector((origin.x, shoulder.y - body_length * 0.32, toe.z + leg_height * 0.54))
     return {
         "anchor_parent": "chest",
         "guide": "scapula",

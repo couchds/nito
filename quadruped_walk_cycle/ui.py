@@ -4,6 +4,28 @@ from .constants import FK_FIELDS, IK_FIELDS, LEG_LABELS, LEG_ORDER
 from .rig_utils import active_armature, resolve_leg_modes
 
 
+GUIDE_BONE_LABELS = {
+    "qwg_guide_pelvis": "Pelvis",
+    "qwg_guide_spine": "Spine",
+    "qwg_guide_chest": "Chest",
+    "qwg_guide_neck": "Neck",
+    "qwg_guide_head": "Head",
+    "qwg_guide_tail": "Tail",
+    "qwg_guide_front_left_upper": "Front Left Shoulder",
+    "qwg_guide_front_left_lower": "Front Left Knee",
+    "qwg_guide_front_left_foot": "Front Left Hoof",
+    "qwg_guide_front_right_upper": "Front Right Shoulder",
+    "qwg_guide_front_right_lower": "Front Right Knee",
+    "qwg_guide_front_right_foot": "Front Right Hoof",
+    "qwg_guide_rear_left_upper": "Rear Left Hip",
+    "qwg_guide_rear_left_lower": "Rear Left Hock",
+    "qwg_guide_rear_left_foot": "Rear Left Hoof",
+    "qwg_guide_rear_right_upper": "Rear Right Hip",
+    "qwg_guide_rear_right_lower": "Rear Right Hock",
+    "qwg_guide_rear_right_foot": "Rear Right Hoof",
+}
+
+
 class QWG_PT_panel(Panel):
     bl_label = "Quadruped Walk"
     bl_idname = "QWG_PT_panel"
@@ -36,6 +58,7 @@ class QWG_PT_panel(Panel):
             layout.label(text="Select an armature.")
             return
         if armature.get("qwg_is_guide"):
+            self._draw_guide_status(layout, context)
             layout.label(text="Edit guide bones, then generate the armature.")
             return
 
@@ -110,6 +133,33 @@ class QWG_PT_panel(Panel):
     def _has_selected_guide(self, context):
         """Return whether any selected object is a QWalk guide armature."""
         return any(obj.type == "ARMATURE" and obj.get("qwg_is_guide") for obj in context.selected_objects)
+
+    def _active_guide_bone_name(self, context):
+        """Return the currently active or selected guide bone name."""
+        active_bone = getattr(context, "active_bone", None)
+        if active_bone:
+            return active_bone.name
+
+        active_pose_bone = getattr(context, "active_pose_bone", None)
+        if active_pose_bone:
+            return active_pose_bone.name
+
+        for attr_name in ("selected_editable_bones", "selected_bones", "selected_pose_bones"):
+            selected = getattr(context, attr_name, None)
+            if selected:
+                return selected[0].name
+        return ""
+
+    def _draw_guide_status(self, layout, context):
+        """Draw the active guide bone label while editing a guide rig."""
+        bone_name = self._active_guide_bone_name(context)
+        box = layout.box()
+        box.label(text="Guide Bone")
+        if bone_name:
+            box.label(text=GUIDE_BONE_LABELS.get(bone_name, bone_name), icon="BONE_DATA")
+            box.label(text=bone_name)
+        else:
+            box.label(text="No guide bone selected.")
 
     def _draw_mapping(self, layout, settings, armature):
         """Draw body, IK, and FK bone mapping controls."""
