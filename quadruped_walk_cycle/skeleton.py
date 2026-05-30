@@ -1,7 +1,7 @@
 import bpy
 from bpy.props import BoolProperty, EnumProperty, FloatProperty, StringProperty
 from bpy.types import Operator
-from math import cos, sin
+from math import cos, pi, sin
 from mathutils import Vector
 
 from .constants import FK_FIELDS, IK_FIELDS, LEG_ORDER
@@ -133,6 +133,100 @@ def scaled(point, scale):
 def mirrored_point(point, x):
     """Return a profile point with an assigned X coordinate."""
     return (x, point[1], point[2])
+
+
+def profile_items():
+    """Return Blender enum items for available quadruped profiles."""
+    return tuple((key, value["label"], "") for key, value in QUADRUPED_PROFILES.items())
+
+
+def collect_profile_points(profile):
+    """Collect key local-space points used to estimate profile bounds."""
+    points = [
+        profile["root"]["head"],
+        profile["root"]["tail"],
+        profile["body"]["head"],
+        profile["body"]["tail"],
+        profile["neck"]["head"],
+        profile["neck"]["tail"],
+        profile["head"]["head"],
+        profile["head"]["tail"],
+    ]
+    for _, head, tail in profile["spine"]:
+        points.extend((head, tail))
+    for _, head, tail in profile["tail"]:
+        points.extend((head, tail))
+
+    for leg_key, width_key in (("front_leg", "leg_width_front"), ("rear_leg", "leg_width_rear")):
+        leg_profile = profile[leg_key]
+        for side in (-1.0, 1.0):
+            x = side * profile[width_key]
+            for point_key in (
+                "guide_head",
+                "guide_tail",
+                "upper_head",
+                "upper_tail",
+                "lower_tail",
+                "foot_tail",
+                "pole",
+            ):
+                points.append(mirrored_point(leg_profile[point_key], x))
+    return [Vector(point) for point in points]
+
+
+def bounds_from_points(points):
+    """Return min, max, and size vectors for a point collection."""
+    min_corner = Vector((min(point.x for point in points), min(point.y for point in points), min(point.z for point in points)))
+    max_corner = Vector((max(point.x for point in points), max(point.y for point in points), max(point.z for point in points)))
+    return min_corner, max_corner, max_corner - min_corner
+
+
+def mesh_world_bounds(mesh_object):
+    """Return world-space bounds for a mesh object."""
+    points = [mesh_object.matrix_world @ Vector(corner) for corner in mesh_object.bound_box]
+    return bounds_from_points(points)
+
+
+def fitted_scale(mesh_size, profile_size, forward_axis, fit_amount):
+    """Return a uniform scale that fits a profile inside mesh bounds."""
+    if forward_axis in {"POS_Y", "NEG_Y"}:
+        mesh_length = mesh_size.y
+        mesh_width = mesh_size.x
+    else:
+        mesh_length = mesh_size.x
+        mesh_width = mesh_size.y
+
+    ratios = [
+        mesh_length / max(profile_size.y, 0.001),
+        mesh_width / max(profile_size.x, 0.001),
+        mesh_size.z / max(profile_size.z, 0.001),
+    ]
+    return max(0.001, min(ratios) * fit_amount)
+
+
+def forward_axis_rotation(forward_axis):
+    """Return Z rotation that maps rig +Y to the mesh forward axis."""
+    return {
+        "POS_Y": 0.0,
+        "NEG_Y": pi,
+        "POS_X": -pi * 0.5,
+        "NEG_X": pi * 0.5,
+    }[forward_axis]
+
+
+def rotate_z(point, angle):
+    """Rotate a vector around the Z axis."""
+    return Vector((point.x * cos(angle) - point.y * sin(angle), point.x * sin(angle) + point.y * cos(angle), point.z))
+
+
+def active_mesh(context):
+    """Return the active mesh, or the first selected mesh."""
+    if context.object and context.object.type == "MESH":
+        return context.object
+    for obj in context.selected_objects:
+        if obj.type == "MESH":
+            return obj
+    return None
 
 
 def add_edit_bone(edit_bones, name, head, tail, scale, parent=None, connected=False, deform=True):
@@ -447,10 +541,7 @@ class QWG_OT_create_quadruped_armature(Operator):
     body_profile: EnumProperty(
         name="Profile",
         description="Proportion template for the generated quadruped",
-        items=(
-            ("MEDIUM", "Medium Quadruped", "Dog/cat-like general quadruped proportions"),
-            ("HORSE", "Horse", "Longer body, neck, and limb proportions"),
-        ),
+        items=profile_items(),
         default="MEDIUM",
     )
     add_ik_constraints: BoolProperty(
@@ -490,4 +581,105 @@ class QWG_OT_create_quadruped_armature(Operator):
             apply_standard_mapping(context.scene.qwg_settings)
 
         self.report({"INFO"}, f"Created quadruped armature {armature.name}.")
+        return {"FINISHED"}
+
+
+class QWG_OT_create_fitted_quadruped_armature(Operator):
+    bl_idname = "qwg.create_fitted_quadruped_armature"
+    bl_label = "Create Fitted Quadruped Armature"
+    bl_description = "Create a quadruped armature scaled and placed to the selected mesh bounds"
+    bl_options = {"REGISTER", "UNDO"}
+
+    armature_name: StringProperty(
+        name="Name",
+        description="Name for the generated armature; leave blank to derive it from the mesh",
+        default="",
+    )
+    body_profile: EnumProperty(
+        name="Profile",
+        description="Proportion template for the generated quadruped",
+        items=profile_items(),
+        default="MEDIUM",
+    )
+    mesh_forward_axis: EnumProperty(
+        name="Mesh Forward",
+        description="World axis pointing from tail toward head on the selected mesh",
+        items=(
+            ("POS_Y", "+Y", "Mesh faces toward positive Y"),
+            ("NEG_Y", "-Y", "Mesh faces toward negative Y"),
+            ("POS_X", "+X", "Mesh faces toward positive X"),
+            ("NEG_X", "-X", "Mesh faces toward negative X"),
+        ),
+        default="POS_Y",
+    )
+    fit_amount: FloatProperty(
+        name="Fit",
+        description="Fraction of the mesh bounds filled by the generated armature",
+        default=0.88,
+        min=0.1,
+        max=1.5,
+    )
+    add_ik_constraints: BoolProperty(
+        name="Add IK Constraints",
+        description="Add IK constraints from foot bones to generated IK targets",
+        default=True,
+    )
+    display_type: EnumProperty(
+        name="Display",
+        description="Viewport display style for the generated armature",
+        items=(
+            ("STICK", "Stick", "Clean rig-style display"),
+            ("OCTAHEDRAL", "Octahedral", "Classic Blender bone shapes"),
+            ("BBONE", "B-Bone", "Thick bendy-bone shapes"),
+            ("WIRE", "Wire", "Wireframe bone shapes"),
+        ),
+        default="STICK",
+    )
+    map_after_create: BoolProperty(
+        name="Map for QWalk",
+        description="Fill QWalk bone mapping fields after creating the armature",
+        default=True,
+    )
+
+    @classmethod
+    def poll(cls, context):
+        """Enable the operator when a mesh is active or selected."""
+        return active_mesh(context) is not None
+
+    def execute(self, context):
+        """Create a quadruped rig fitted to selected mesh bounds."""
+        mesh_object = active_mesh(context)
+        if not mesh_object:
+            self.report({"ERROR"}, "Select a mesh to fit.")
+            return {"CANCELLED"}
+
+        profile = QUADRUPED_PROFILES.get(self.body_profile, QUADRUPED_PROFILES["MEDIUM"])
+        mesh_min, mesh_max, mesh_size = mesh_world_bounds(mesh_object)
+        profile_min, profile_max, profile_size = bounds_from_points(collect_profile_points(profile))
+        scale = fitted_scale(mesh_size, profile_size, self.mesh_forward_axis, self.fit_amount)
+        angle = forward_axis_rotation(self.mesh_forward_axis)
+
+        armature_name = self.armature_name.strip() or f"{mesh_object.name}_QWalk_Rig"
+        armature = create_standard_quadruped(
+            context,
+            armature_name,
+            scale,
+            self.add_ik_constraints,
+            self.display_type,
+            self.body_profile,
+        )
+
+        local_center = (profile_min + profile_max) * 0.5 * scale
+        rotated_center = rotate_z(local_center, angle)
+        target_center = (mesh_min + mesh_max) * 0.5
+        armature.rotation_euler.z = angle
+        armature.location.x = target_center.x - rotated_center.x
+        armature.location.y = target_center.y - rotated_center.y
+        armature.location.z = mesh_min.z - profile_min.z * scale
+
+        store_base_pose(armature)
+        if self.map_after_create:
+            apply_standard_mapping(context.scene.qwg_settings)
+
+        self.report({"INFO"}, f"Created fitted quadruped armature for {mesh_object.name}.")
         return {"FINISHED"}

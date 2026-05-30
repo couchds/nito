@@ -18,6 +18,9 @@ class QWG_PT_panel(Panel):
         armature = active_armature(context)
 
         layout.operator("qwg.create_quadruped_armature", icon="OUTLINER_OB_ARMATURE")
+        fit_row = layout.row()
+        fit_row.enabled = self._has_selected_mesh(context)
+        fit_row.operator("qwg.create_fitted_quadruped_armature", icon="MOD_ARMATURE")
 
         if not armature:
             layout.label(text="Select an armature.")
@@ -82,6 +85,10 @@ class QWG_PT_panel(Panel):
     def _has_fk_legs(self, armature, settings):
         """Return whether the current settings will animate any FK chains."""
         return any(mode == "FK" for mode in resolve_leg_modes(armature, settings).values())
+
+    def _has_selected_mesh(self, context):
+        """Return whether any selected object is a mesh."""
+        return any(obj.type == "MESH" for obj in context.selected_objects)
 
     def _draw_mapping(self, layout, settings, armature):
         """Draw body, IK, and FK bone mapping controls."""

@@ -64,6 +64,16 @@ The starter armature is meant as a clean animation test rig and naming template,
 
 New generated rigs open in Pose Mode with the main animation controls selected. The control widgets are stored as hidden mesh objects in a `*_widgets` collection and assigned as custom bone shapes.
 
+## Mesh Fitting Phase 1
+
+Select a mesh and click **Create Fitted Quadruped Armature** to scale and place a generated armature inside the mesh's world-space bounds. This first phase uses explicit assumptions rather than leg detection:
+
+- Choose `Profile` in the operator redo panel.
+- Choose `Mesh Forward` based on the direction from tail toward head.
+- Adjust `Fit` if the rig should sit tighter or looser inside the mesh.
+
+This does not bind the mesh yet. It only creates a fitted armature.
+
 ## Notes
 
 - **Replace Keys** removes existing location/Euler rotation keys on mapped bones only inside the selected frame range.
