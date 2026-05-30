@@ -60,6 +60,8 @@ The generated rig includes:
 - Four pole controls such as `front_left_pole`
 - Optional IK constraints from each lower-leg bone to its IK target
 
+Hidden non-deforming shoulder/hip helper bones keep the limb chains parented cleanly without becoming part of the visible deformation skeleton.
+
 The starter armature is meant as a clean animation test rig and naming template, not a production-ready anatomy rig. Use Blender's operator redo panel after creation if you want a different profile or Octahedral, B-Bone, or Wire display instead.
 
 New generated rigs open in Pose Mode with the main animation controls selected. The control widgets are stored as hidden mesh objects in a `*_widgets` collection and assigned as custom bone shapes.

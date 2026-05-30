@@ -1131,6 +1131,7 @@ def create_standard_quadruped(
         named_bones[bone_name] = tail_parent
 
     leg_parents = {"fl": named_bones["chest"], "fr": named_bones["chest"], "rl": named_bones["pelvis"], "rr": named_bones["pelvis"]}
+    helper_bone_names = []
     for leg in LEG_ORDER:
         names = STANDARD_LEG_NAMES[leg]
         side = 1.0 if leg.endswith("l") else -1.0
@@ -1147,7 +1148,9 @@ def create_standard_quadruped(
             point("guide_tail"),
             scale,
             leg_parents[leg],
+            deform=False,
         )
+        helper_bone_names.append(guide_name)
 
         upper = add_edit_bone(
             bones,
@@ -1201,6 +1204,8 @@ def create_standard_quadruped(
     bpy.ops.object.mode_set(mode="POSE")
     for pose_bone in armature_object.pose.bones:
         pose_bone.rotation_mode = "XYZ"
+    for bone_name in helper_bone_names:
+        armature_object.data.bones[bone_name].hide = True
     store_base_pose(armature_object)
 
     if add_ik_constraints:
