@@ -580,58 +580,29 @@ def build_landmark_profile(points, profile_key, fit_amount, robust=True, top_per
     head_z = measured_back_z(points, head_y, slice_radius, neck_z - body_depth * 0.06)
 
     front_shoulder_y = clamp(front_foot_y + body_length * 0.03, body_y_max - body_length * 0.18, body_y_max + body_length * 0.08)
-    front_elbow_y = front_foot_y - body_length * 0.06
-    front_wrist_y = front_foot_y + body_length * 0.02
     front_toe_y = front_foot_y + body_length * 0.10
 
     rear_hip_y = clamp(rear_foot_y - body_length * 0.08, body_y_min - body_length * 0.08, body_y_min + body_length * 0.18)
-    rear_stifle_y = rear_foot_y + body_length * 0.13
-    rear_hock_y = rear_foot_y + body_length * 0.02
     rear_toe_y = rear_foot_y + body_length * 0.12
     leg_top_z = max(belly_z, ground_z + height * 0.42)
-    front_upper_z, front_lower_z = measured_leg_levels(
-        points,
-        front_foot_y,
-        slice_radius * 1.35,
-        ground_z,
-        leg_top_z,
-        ground_z + (leg_top_z - ground_z) * 0.72,
-        ground_z + (leg_top_z - ground_z) * 0.34,
-    )
-    rear_upper_z, rear_lower_z = measured_leg_levels(
-        points,
-        rear_foot_y,
-        slice_radius * 1.35,
-        ground_z,
-        leg_top_z,
-        ground_z + (leg_top_z - ground_z) * 0.72,
-        ground_z + (leg_top_z - ground_z) * 0.34,
-    )
     front_shoulder_z = min(measured_back_z(spine_points, front_shoulder_y, slice_radius, chest_z) - body_depth * 0.42, leg_top_z)
     rear_hip_z = min(measured_back_z(spine_points, rear_hip_y, slice_radius, pelvis_z) - body_depth * 0.36, leg_top_z)
 
-    front_leg = {
-        "anchor_parent": "chest",
-        "guide": "scapula",
-        "guide_head": rel(x_center, body_y_max - body_length * 0.06, chest_z),
-        "guide_tail": rel(x_center, front_shoulder_y, front_shoulder_z),
-        "upper_head": rel(x_center, front_shoulder_y, front_shoulder_z),
-        "upper_tail": rel(x_center, front_elbow_y, front_upper_z),
-        "lower_tail": rel(x_center, front_wrist_y, front_lower_z),
-        "foot_tail": rel(x_center, front_toe_y, foot_z),
-        "pole": rel(x_center, front_foot_y - body_length * 0.32, front_upper_z),
-    }
-    rear_leg = {
-        "anchor_parent": "pelvis",
-        "guide": "hip",
-        "guide_head": rel(x_center, body_y_min + body_length * 0.06, pelvis_z),
-        "guide_tail": rel(x_center, rear_hip_y, rear_hip_z),
-        "upper_head": rel(x_center, rear_hip_y, rear_hip_z),
-        "upper_tail": rel(x_center, rear_stifle_y, rear_upper_z),
-        "lower_tail": rel(x_center, rear_hock_y, rear_lower_z),
-        "foot_tail": rel(x_center, rear_toe_y, foot_z),
-        "pole": rel(x_center, rear_foot_y - body_length * 0.36, rear_upper_z),
-    }
+    origin = Vector((x_center, body_center_y, ground_z))
+    front_leg = clean_front_leg_profile(
+        Vector((x_center, body_y_max - body_length * 0.06, chest_z)),
+        Vector((x_center, front_shoulder_y, front_shoulder_z)),
+        Vector((x_center, front_toe_y, foot_z)),
+        body_length,
+        origin,
+    )
+    rear_leg = clean_hind_leg_profile(
+        Vector((x_center, body_y_min + body_length * 0.06, pelvis_z)),
+        Vector((x_center, rear_hip_y, rear_hip_z)),
+        Vector((x_center, rear_toe_y, foot_z)),
+        body_length,
+        origin,
+    )
 
     label = QUADRUPED_PROFILES.get(profile_key, QUADRUPED_PROFILES["MEDIUM"])["label"]
     profile = {
@@ -663,7 +634,7 @@ def build_landmark_profile(points, profile_key, fit_amount, robust=True, top_per
         "rear_leg": rear_leg,
         "control_scale": max(height, length * 0.35),
     }
-    return profile, Vector((x_center, body_center_y, ground_z)), local_min, local_max, local_size
+    return profile, origin, local_min, local_max, local_size
 
 
 def end_slice_score(points, y_min, y_max, ground_z, height, sample_from_front=True):
@@ -787,6 +758,41 @@ def create_guide_bone(edit_bones, name, head, tail, parent=None, connected=False
     return bone
 
 
+def store_initial_guide_bone(guide, name, head, tail):
+    """Remember the generated guide placement so edited side-view pairs can be detected later."""
+    guide[f"qwg_initial_{name}_head"] = tuple(Vector(head))
+    guide[f"qwg_initial_{name}_tail"] = tuple(Vector(tail))
+
+
+def initial_guide_point(guide, name, use_tail=False):
+    """Return the generated guide point stored for one bone, if available."""
+    point = guide.get(f"qwg_initial_{name}_{'tail' if use_tail else 'head'}")
+    return Vector(point) if point is not None else None
+
+
+def guide_bone_side(name):
+    """Return l/r when a guide bone belongs to a left or right leg."""
+    for leg, names in GUIDE_LEG_BONES.items():
+        if name in names.values():
+            return leg[-1]
+    return None
+
+
+def active_guide_leg_side(guide):
+    """Return the active edited leg side, useful when side-view bones overlap."""
+    active_name = None
+    try:
+        if guide.mode == "EDIT":
+            active = guide.data.edit_bones.active
+            active_name = active.name if active else None
+        else:
+            active = guide.data.bones.active
+            active_name = active.name if active else None
+    except Exception:
+        active_name = None
+    return guide_bone_side(active_name) if active_name else None
+
+
 def leg_profile_point(profile, leg, leg_profile, point_key, x):
     """Return an exact per-leg point or mirrored shared profile point."""
     override = profile.get("leg_overrides", {}).get(leg)
@@ -818,12 +824,16 @@ def create_guide_armature(context, name, profile, origin, angle, source_mesh_nam
     bpy.ops.object.mode_set(mode="EDIT")
     bones = data.edit_bones
 
-    pelvis = create_guide_bone(bones, GUIDE_SPINE_BONES["pelvis"], profile["spine"][0][1], profile["spine"][0][2])
-    spine = create_guide_bone(bones, GUIDE_SPINE_BONES["spine"], profile["spine"][1][1], profile["spine"][1][2], pelvis, True)
-    chest = create_guide_bone(bones, GUIDE_SPINE_BONES["chest"], profile["spine"][2][1], profile["spine"][2][2], spine, True)
-    neck = create_guide_bone(bones, GUIDE_SPINE_BONES["neck"], profile["neck"]["head"], profile["neck"]["tail"], chest, True)
-    create_guide_bone(bones, GUIDE_SPINE_BONES["head"], profile["head"]["head"], profile["head"]["tail"], neck, True)
-    create_guide_bone(bones, GUIDE_SPINE_BONES["tail"], profile["tail"][0][1], profile["tail"][-1][2], pelvis)
+    def add_guide(name, head, tail, parent=None, connected=False):
+        store_initial_guide_bone(guide, name, head, tail)
+        return create_guide_bone(bones, name, head, tail, parent, connected)
+
+    pelvis = add_guide(GUIDE_SPINE_BONES["pelvis"], profile["spine"][0][1], profile["spine"][0][2])
+    spine = add_guide(GUIDE_SPINE_BONES["spine"], profile["spine"][1][1], profile["spine"][1][2], pelvis, True)
+    chest = add_guide(GUIDE_SPINE_BONES["chest"], profile["spine"][2][1], profile["spine"][2][2], spine, True)
+    neck = add_guide(GUIDE_SPINE_BONES["neck"], profile["neck"]["head"], profile["neck"]["tail"], chest, True)
+    add_guide(GUIDE_SPINE_BONES["head"], profile["head"]["head"], profile["head"]["tail"], neck, True)
+    add_guide(GUIDE_SPINE_BONES["tail"], profile["tail"][0][1], profile["tail"][-1][2], pelvis)
 
     for leg in LEG_ORDER:
         is_front = leg.startswith("f")
@@ -831,23 +841,20 @@ def create_guide_armature(context, name, profile, origin, angle, source_mesh_nam
         leg_key = "front_leg" if is_front else "rear_leg"
         parent = chest if is_front else pelvis
         names = GUIDE_LEG_BONES[leg]
-        upper = create_guide_bone(
-            bones,
+        upper = add_guide(
             names["upper"],
             profile_side_point(profile, leg_key, "upper_head", side),
             profile_side_point(profile, leg_key, "upper_tail", side),
             parent,
         )
-        lower = create_guide_bone(
-            bones,
+        lower = add_guide(
             names["lower"],
             profile_side_point(profile, leg_key, "upper_tail", side),
             profile_side_point(profile, leg_key, "lower_tail", side),
             upper,
             True,
         )
-        create_guide_bone(
-            bones,
+        add_guide(
             names["foot"],
             profile_side_point(profile, leg_key, "lower_tail", side),
             profile_side_point(profile, leg_key, "foot_tail", side),
@@ -1010,7 +1017,7 @@ def improve_front_leg_profile(leg_profile, body_length):
     return result
 
 
-def build_profile_from_guides(guide, symmetrize_legs=True):
+def build_profile_from_guides(guide, symmetrize_legs=True, preferred_guide_side=None):
     """Build a generated rig profile from an edited QWalk guide armature."""
     pelvis_head, pelvis_tail = guide_bone_pair(guide, GUIDE_SPINE_BONES["pelvis"])
     spine_head, spine_tail = guide_bone_pair(guide, GUIDE_SPINE_BONES["spine"])
@@ -1038,8 +1045,45 @@ def build_profile_from_guides(guide, symmetrize_legs=True):
     def centered(point):
         return centered_point(point, origin)
 
-    def leg_average(leg_a, leg_b, bone_key, use_tail=False):
+    body_length = max(abs(chest_tail.y - pelvis_head.y), 0.1)
+
+    def leg_edit_delta(leg):
+        """Return how much one side's guide chain changed from its generated Y/Z profile."""
+        total = 0.0
+        point_count = 0
+        for bone_key in ("upper", "lower", "foot"):
+            name = GUIDE_LEG_BONES[leg][bone_key]
+            head, tail = guide_bone_pair(guide, name)
+            for use_tail, point in ((False, head), (True, tail)):
+                initial = initial_guide_point(guide, name, use_tail)
+                if initial is None:
+                    return None
+                total += ((point.y - initial.y) ** 2 + (point.z - initial.z) ** 2) ** 0.5
+                point_count += 1
+        return total / max(point_count, 1)
+
+    def preferred_pair_leg(leg_a, leg_b):
+        """Pick one edited overlaid side, or average when both sides were edited together."""
+        delta_a = leg_edit_delta(leg_a)
+        delta_b = leg_edit_delta(leg_b)
+        if delta_a is not None and delta_b is not None:
+            threshold = max(body_length * 0.025, 0.01)
+            if delta_a > max(delta_b * 1.35, threshold):
+                return leg_a
+            if delta_b > max(delta_a * 1.35, threshold):
+                return leg_b
+
+        if preferred_guide_side in {"l", "r"}:
+            return leg_a if leg_a.endswith(preferred_guide_side) else leg_b
+        return None
+
+    def leg_pair_point(leg_a, leg_b, bone_key, use_tail=False):
         index = 1 if use_tail else 0
+        preferred_leg = preferred_pair_leg(leg_a, leg_b)
+        if preferred_leg:
+            point = guide_bone_pair(guide, GUIDE_LEG_BONES[preferred_leg][bone_key])[index]
+            return Vector((origin.x, point.y, point.z))
+
         point_a = guide_bone_pair(guide, GUIDE_LEG_BONES[leg_a][bone_key])[index]
         point_b = guide_bone_pair(guide, GUIDE_LEG_BONES[leg_b][bone_key])[index]
         average = average_vectors((point_a, point_b))
@@ -1053,16 +1097,15 @@ def build_profile_from_guides(guide, symmetrize_legs=True):
                 samples.extend((abs(head.x - origin.x), abs(tail.x - origin.x)))
         return max(sum(samples) / len(samples), 0.001)
 
-    front_upper_head = leg_average("fl", "fr", "upper")
-    front_upper_tail = leg_average("fl", "fr", "upper", True)
-    front_lower_tail = leg_average("fl", "fr", "lower", True)
-    front_foot_tail = leg_average("fl", "fr", "foot", True)
-    rear_upper_head = leg_average("rl", "rr", "upper")
-    rear_upper_tail = leg_average("rl", "rr", "upper", True)
-    rear_lower_tail = leg_average("rl", "rr", "lower", True)
-    rear_foot_tail = leg_average("rl", "rr", "foot", True)
+    front_upper_head = leg_pair_point("fl", "fr", "upper")
+    front_upper_tail = leg_pair_point("fl", "fr", "upper", True)
+    front_lower_tail = leg_pair_point("fl", "fr", "lower", True)
+    front_foot_tail = leg_pair_point("fl", "fr", "foot", True)
+    rear_upper_head = leg_pair_point("rl", "rr", "upper")
+    rear_upper_tail = leg_pair_point("rl", "rr", "upper", True)
+    rear_lower_tail = leg_pair_point("rl", "rr", "lower", True)
+    rear_foot_tail = leg_pair_point("rl", "rr", "foot", True)
 
-    body_length = max(abs(chest_tail.y - pelvis_head.y), 0.1)
     guide_points = center_points + leg_points
     min_corner, max_corner, size = bounds_from_points(guide_points)
     root_width = max(size.x * 0.45, 0.12)
@@ -1651,7 +1694,7 @@ def create_standard_quadruped(
             constraint.chain_count = 3
             constraint.iterations = 24
             if hasattr(constraint, "use_rotation"):
-                constraint.use_rotation = True
+                constraint.use_rotation = False
             if hasattr(constraint, "use_stretch"):
                 constraint.use_stretch = False
         refresh_ik_constraints(armature_object)
@@ -2005,11 +2048,12 @@ class QWG_OT_create_armature_from_guides(Operator):
         if not guide:
             self.report({"ERROR"}, "Select a QWalk guide armature.")
             return {"CANCELLED"}
+        preferred_guide_side = active_guide_leg_side(guide)
         if guide.mode != "OBJECT":
             bpy.ops.object.mode_set(mode="OBJECT")
 
         try:
-            profile, origin = build_profile_from_guides(guide, self.symmetrize_legs)
+            profile, origin = build_profile_from_guides(guide, self.symmetrize_legs, preferred_guide_side)
         except ValueError as error:
             self.report({"ERROR"}, str(error))
             return {"CANCELLED"}

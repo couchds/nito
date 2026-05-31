@@ -522,7 +522,7 @@ class QWG_OT_generate_walk_cycle(Operator):
         return {"FINISHED"}
 
     def _prepare_ik_constraints(self, armature, settings, mode_by_leg):
-        """Keep generated IK feet oriented by their target controls."""
+        """Keep generated IK feet from inheriting control-handle rotation."""
         for leg, mode in mode_by_leg.items():
             if mode != "IK":
                 continue
@@ -536,7 +536,7 @@ class QWG_OT_generate_walk_cycle(Operator):
                 if constraint.name != "QWalk IK" and constraint.target != armature:
                     continue
                 if hasattr(constraint, "use_rotation"):
-                    constraint.use_rotation = True
+                    constraint.use_rotation = False
                 if hasattr(constraint, "use_stretch"):
                     constraint.use_stretch = False
 
