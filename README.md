@@ -135,6 +135,8 @@ python -m venv .venv
 
 The trainer samples point clouds from the OBJ meshes, predicts the 23 guide points needed to reconstruct the QWalk guide bones, and uses `animal_type` plus `morphology_type` as auxiliary classification tasks. Training artifacts are written under `models/qwalk_guide_initializer/`, including `qwalk_guide_initializer.pt`, `metrics.json`, and a small `test_predictions_preview.jsonl`.
 
+Real labels are treated as ground truth and are only loaded from `--real-data` when their JSON has `verified_label: true`. Use `scripts/export_qwalk_guide_label.py --verified` only after the guide placement has been visually reviewed and corrected in Blender. Candidate labels can still be tested with `--allow-unverified-real`, but they should not be used for model training.
+
 Predict guide bones for an OBJ mesh:
 
 ```powershell

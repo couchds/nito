@@ -1,0 +1,363 @@
+{
+  "id": "real_horse_000",
+  "source": "real_qwalk_label_v2",
+  "verified_label": false,
+  "training_eligible": false,
+  "animal_type": "horse",
+  "morphology_type": "ungulate",
+  "axes": {
+    "forward": [
+      0.0,
+      1.0,
+      0.0
+    ],
+    "left": [
+      1.0,
+      0.0,
+      0.0
+    ],
+    "up": [
+      0.0,
+      0.0,
+      1.0
+    ]
+  },
+  "guide_bones": {
+    "qwg_guide_pelvis": {
+      "head": [
+        0.0,
+        -0.36,
+        0.56
+      ],
+      "tail": [
+        0.0,
+        -0.2,
+        0.59
+      ]
+    },
+    "qwg_guide_spine": {
+      "head": [
+        0.0,
+        -0.2,
+        0.59
+      ],
+      "tail": [
+        0.0,
+        0.02,
+        0.6
+      ]
+    },
+    "qwg_guide_chest": {
+      "head": [
+        0.0,
+        0.02,
+        0.6
+      ],
+      "tail": [
+        0.0,
+        0.2,
+        0.63
+      ]
+    },
+    "qwg_guide_neck": {
+      "head": [
+        0.0,
+        0.2,
+        0.63
+      ],
+      "tail": [
+        0.0,
+        0.36,
+        0.8
+      ]
+    },
+    "qwg_guide_head": {
+      "head": [
+        0.0,
+        0.36,
+        0.8
+      ],
+      "tail": [
+        0.0,
+        0.49,
+        0.68
+      ]
+    },
+    "qwg_guide_tail": {
+      "head": [
+        0.0,
+        -0.36,
+        0.56
+      ],
+      "tail": [
+        0.0,
+        -0.5,
+        0.42
+      ]
+    },
+    "qwg_guide_front_left_upper": {
+      "head": [
+        0.075,
+        0.18,
+        0.55
+      ],
+      "tail": [
+        0.075,
+        0.17,
+        0.35
+      ]
+    },
+    "qwg_guide_front_left_lower": {
+      "head": [
+        0.075,
+        0.17,
+        0.35
+      ],
+      "tail": [
+        0.075,
+        0.22,
+        0.13
+      ]
+    },
+    "qwg_guide_front_left_foot": {
+      "head": [
+        0.075,
+        0.22,
+        0.13
+      ],
+      "tail": [
+        0.075,
+        0.25,
+        0.025
+      ]
+    },
+    "qwg_guide_front_right_upper": {
+      "head": [
+        -0.075,
+        0.18,
+        0.55
+      ],
+      "tail": [
+        -0.075,
+        0.17,
+        0.35
+      ]
+    },
+    "qwg_guide_front_right_lower": {
+      "head": [
+        -0.075,
+        0.17,
+        0.35
+      ],
+      "tail": [
+        -0.075,
+        0.22,
+        0.13
+      ]
+    },
+    "qwg_guide_front_right_foot": {
+      "head": [
+        -0.075,
+        0.22,
+        0.13
+      ],
+      "tail": [
+        -0.075,
+        0.25,
+        0.025
+      ]
+    },
+    "qwg_guide_rear_left_upper": {
+      "head": [
+        0.075,
+        -0.34,
+        0.5
+      ],
+      "tail": [
+        0.075,
+        -0.26,
+        0.34
+      ]
+    },
+    "qwg_guide_rear_left_lower": {
+      "head": [
+        0.075,
+        -0.26,
+        0.34
+      ],
+      "tail": [
+        0.075,
+        -0.31,
+        0.13
+      ]
+    },
+    "qwg_guide_rear_left_foot": {
+      "head": [
+        0.075,
+        -0.31,
+        0.13
+      ],
+      "tail": [
+        0.075,
+        -0.23,
+        0.025
+      ]
+    },
+    "qwg_guide_rear_right_upper": {
+      "head": [
+        -0.075,
+        -0.34,
+        0.5
+      ],
+      "tail": [
+        -0.075,
+        -0.26,
+        0.34
+      ]
+    },
+    "qwg_guide_rear_right_lower": {
+      "head": [
+        -0.075,
+        -0.26,
+        0.34
+      ],
+      "tail": [
+        -0.075,
+        -0.31,
+        0.13
+      ]
+    },
+    "qwg_guide_rear_right_foot": {
+      "head": [
+        -0.075,
+        -0.31,
+        0.13
+      ],
+      "tail": [
+        -0.075,
+        -0.23,
+        0.025
+      ]
+    }
+  },
+  "landmarks": {
+    "pelvis": [
+      0.0,
+      -0.36,
+      0.56
+    ],
+    "spine": [
+      0.0,
+      0.02,
+      0.6
+    ],
+    "chest": [
+      0.0,
+      0.2,
+      0.63
+    ],
+    "neck": [
+      0.0,
+      0.36,
+      0.8
+    ],
+    "head": [
+      0.0,
+      0.49,
+      0.68
+    ],
+    "tail": [
+      0.0,
+      -0.5,
+      0.42
+    ],
+    "front_left_upper": [
+      0.075,
+      0.18,
+      0.55
+    ],
+    "front_left_mid": [
+      0.075,
+      0.17,
+      0.35
+    ],
+    "front_left_lower": [
+      0.075,
+      0.22,
+      0.13
+    ],
+    "front_left_foot": [
+      0.075,
+      0.25,
+      0.025
+    ],
+    "front_right_upper": [
+      -0.075,
+      0.18,
+      0.55
+    ],
+    "front_right_mid": [
+      -0.075,
+      0.17,
+      0.35
+    ],
+    "front_right_lower": [
+      -0.075,
+      0.22,
+      0.13
+    ],
+    "front_right_foot": [
+      -0.075,
+      0.25,
+      0.025
+    ],
+    "rear_left_upper": [
+      0.075,
+      -0.34,
+      0.5
+    ],
+    "rear_left_mid": [
+      0.075,
+      -0.26,
+      0.34
+    ],
+    "rear_left_lower": [
+      0.075,
+      -0.31,
+      0.13
+    ],
+    "rear_left_foot": [
+      0.075,
+      -0.23,
+      0.025
+    ],
+    "rear_right_upper": [
+      -0.075,
+      -0.34,
+      0.5
+    ],
+    "rear_right_mid": [
+      -0.075,
+      -0.26,
+      0.34
+    ],
+    "rear_right_lower": [
+      -0.075,
+      -0.31,
+      0.13
+    ],
+    "rear_right_foot": [
+      -0.075,
+      -0.23,
+      0.025
+    ]
+  },
+  "parameters": {
+    "blend_file": "C:\\Users\\Daniel Couch\\Desktop\\Coding\\walk-cycle-generator\\Horse.blend",
+    "mesh_object": "tripo_node_06e956d7-e4d0-4801-82d3-8a6d1cd4a24d",
+    "label_note": "Candidate horse label from visual side-view correction; inspect and correct before treating as final ground truth."
+  },
+  "split": "train",
+  "mesh_file": "train/real_horse_000.obj",
+  "label_file": "train/real_horse_000.json"
+}

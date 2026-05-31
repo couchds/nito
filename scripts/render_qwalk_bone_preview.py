@@ -16,6 +16,11 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Render a QWalk preview with visible bone curves.")
     parser.add_argument("--out", required=True, help="Output PNG path.")
     parser.add_argument("--resolution", type=int, default=1200, help="Square output resolution.")
+    parser.add_argument(
+        "--overlay-front",
+        action="store_true",
+        help="Project armature curves onto the camera-facing side so the mesh cannot occlude them.",
+    )
     return parser.parse_args(script_args)
 
 
@@ -40,15 +45,22 @@ def add_bone_curve(name: str, start: Vector, end: Vector, mat: bpy.types.Materia
     bpy.context.collection.objects.link(obj)
 
 
-def make_armatures_visible() -> None:
+def make_armatures_visible(overlay_front: bool) -> None:
     guide_mat = material("QWalk Preview Guide", (1.0, 0.48, 0.0, 1.0))
     rig_mat = material("QWalk Preview Rig", (0.02, 0.02, 0.02, 1.0))
+    front_y = None
+    if overlay_front:
+        mins, maxs = scene_bounds()
+        front_y = mins.y - max((maxs - mins).length * 0.04, 0.02)
     for armature in [obj for obj in bpy.context.scene.objects if obj.type == "ARMATURE"]:
         mat = guide_mat if armature.get("qwg_is_guide") else rig_mat
         bevel = 0.004 if armature.get("qwg_is_guide") else 0.003
         for bone in armature.data.bones:
             start = armature.matrix_world @ bone.head_local
             end = armature.matrix_world @ bone.tail_local
+            if front_y is not None:
+                start.y = front_y
+                end.y = front_y
             add_bone_curve(f"preview_{armature.name}_{bone.name}", start, end, mat, bevel)
 
 
@@ -84,7 +96,7 @@ def main() -> None:
     args = parse_args()
     output = Path(args.out).expanduser().resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
-    make_armatures_visible()
+    make_armatures_visible(args.overlay_front)
     setup_camera()
     scene = bpy.context.scene
     scene.render.engine = "BLENDER_WORKBENCH"

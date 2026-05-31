@@ -124,7 +124,12 @@ def extract_guide_points(record: dict) -> np.ndarray:
     )
 
 
-def load_samples(data_dir: Path, split: str) -> tuple[list[Sample], list[str], list[str]]:
+def load_samples(
+    data_dir: Path,
+    split: str,
+    *,
+    require_verified_labels: bool = False,
+) -> tuple[list[Sample], list[str], list[str]]:
     info_path = data_dir / "dataset_info.json"
     manifest_path = data_dir / "manifest.jsonl"
     if not info_path.exists() or not manifest_path.exists():
@@ -136,6 +141,8 @@ def load_samples(data_dir: Path, split: str) -> tuple[list[Sample], list[str], l
     samples = []
     for record in read_jsonl(manifest_path):
         if record["split"] != split:
+            continue
+        if require_verified_labels and not record.get("verified_label", False):
             continue
         mesh_file = data_dir / record["mesh_file"]
         vertices = read_obj_vertices(mesh_file)
@@ -154,7 +161,8 @@ def load_samples(data_dir: Path, split: str) -> tuple[list[Sample], list[str], l
             )
         )
     if not samples:
-        raise ValueError(f"No samples found for split '{split}' in {manifest_path}.")
+        verified_note = " verified" if require_verified_labels else ""
+        raise ValueError(f"No{verified_note} samples found for split '{split}' in {manifest_path}.")
     return samples, animal_types, morphology_types
 
 
@@ -376,6 +384,14 @@ def train(args: argparse.Namespace) -> dict[str, float]:
     train_samples, animal_types, morphology_types = load_samples(data_dir, "train")
     val_samples, _, _ = load_samples(data_dir, "val")
     test_samples, _, _ = load_samples(data_dir, "test")
+    real_samples = []
+    if args.real_data:
+        real_samples, _, _ = load_samples(
+            Path(args.real_data),
+            "train",
+            require_verified_labels=not args.allow_unverified_real,
+        )
+        train_samples = train_samples + real_samples * args.real_repeat
 
     train_dataset = QuadrupedPointDataset(train_samples, animal_types, morphology_types, args.num_points, augment=True)
     val_dataset = QuadrupedPointDataset(val_samples, animal_types, morphology_types, args.num_points, augment=False)
@@ -386,6 +402,9 @@ def train(args: argparse.Namespace) -> dict[str, float]:
     test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, num_workers=0)
 
     model = PointNetGuideInitializer(len(TARGET_POINT_NAMES), len(animal_types), len(morphology_types)).to(device)
+    if args.init_checkpoint:
+        checkpoint = torch.load(args.init_checkpoint, map_location=device, weights_only=False)
+        model.load_state_dict(checkpoint["model_state"])
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max(1, args.epochs))
 
@@ -394,6 +413,8 @@ def train(args: argparse.Namespace) -> dict[str, float]:
     best_path = out_dir / "qwalk_guide_initializer.pt"
     history = []
 
+    if real_samples:
+        print(f"Added {len(real_samples)} real sample(s), repeated {args.real_repeat}x.")
     print(f"Training on {len(train_samples)} samples, validating on {len(val_samples)}, testing on {len(test_samples)}.")
     print(f"Device: {device}; points/sample: {args.num_points}; guide points: {len(TARGET_POINT_NAMES)}.")
 
@@ -455,6 +476,8 @@ def train(args: argparse.Namespace) -> dict[str, float]:
                     "epoch": epoch,
                     "val_metrics": val_metrics,
                     "args": vars(args),
+                    "real_sample_count": len(real_samples),
+                    "real_repeat": args.real_repeat,
                 },
                 best_path,
             )
@@ -489,6 +512,14 @@ def train(args: argparse.Namespace) -> dict[str, float]:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train a synthetic QWalk guide initializer.")
     parser.add_argument("--data", default="data/synthetic_quadrupeds", help="Synthetic dataset directory.")
+    parser.add_argument("--real-data", default="", help="Optional real labeled dataset directory to mix into training.")
+    parser.add_argument("--real-repeat", type=int, default=24, help="How many times to repeat real train samples.")
+    parser.add_argument(
+        "--allow-unverified-real",
+        action="store_true",
+        help="Allow real labels without verified_label=true. Intended only for debugging, not training.",
+    )
+    parser.add_argument("--init-checkpoint", default="", help="Optional checkpoint to initialize/fine-tune from.")
     parser.add_argument("--out", default="models/qwalk_guide_initializer", help="Output directory for model artifacts.")
     parser.add_argument("--epochs", type=int, default=40, help="Training epochs.")
     parser.add_argument("--batch-size", type=int, default=32, help="Batch size.")
@@ -507,6 +538,8 @@ def parse_args() -> argparse.Namespace:
         parser.error("--batch-size must be positive.")
     if args.num_points <= 0:
         parser.error("--num-points must be positive.")
+    if args.real_repeat <= 0:
+        parser.error("--real-repeat must be positive.")
     return args
 
 
