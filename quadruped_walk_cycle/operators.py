@@ -33,6 +33,7 @@ from .rig_utils import (
 
 LEG_BONE_PREFIXES = ("front_left_", "front_right_", "rear_left_", "rear_right_")
 TORSO_BONE_NAMES = {"pelvis", "spine_01", "chest"}
+TAIL_BONE_NAMES = {"tail_01", "tail_02"}
 
 
 class QWG_OT_auto_map(Operator):
@@ -180,6 +181,8 @@ def deform_bone_segments(armature):
     for bone in armature.data.bones:
         if not bone.use_deform:
             continue
+        if bone.name.endswith("_foot"):
+            continue
         head = bone.head_local.copy()
         tail = bone.tail_local.copy()
         if (tail - head).length <= 0.0001:
@@ -228,6 +231,13 @@ def binding_metrics(segments):
         elif name in TORSO_BONE_NAMES:
             torso_points.extend((head, tail))
 
+    tail_points = [
+        point
+        for name, head, tail in segments
+        if name in TAIL_BONE_NAMES
+        for point in (head, tail)
+    ]
+
     for prefix, box in list(leg_boxes.items()):
         leg_boxes[prefix] = {
             "min_x": min(box["xs"]),
@@ -250,6 +260,17 @@ def binding_metrics(segments):
         }
     leg_side_distances = [abs(box["center_x"] - midline_x) for box in leg_boxes.values()]
 
+    tail_box = None
+    if tail_points:
+        tail_box = {
+            "min_x": min(point.x for point in tail_points),
+            "max_x": max(point.x for point in tail_points),
+            "min_y": min(point.y for point in tail_points),
+            "max_y": max(point.y for point in tail_points),
+            "min_z": min(point.z for point in tail_points),
+            "max_z": max(point.z for point in tail_points),
+        }
+
     return {
         "body_box": body_box,
         "ground_z": ground_z,
@@ -257,6 +278,7 @@ def binding_metrics(segments):
         "leg_boxes": leg_boxes,
         "midline_x": midline_x,
         "min_leg_side_distance": min(leg_side_distances) if leg_side_distances else 0.0,
+        "tail_box": tail_box,
     }
 
 
@@ -325,8 +347,35 @@ def closest_leg_prefix(point, metrics):
     return best_prefix
 
 
+def in_tail_region(point, metrics):
+    """Return whether a point is likely centered tail geometry behind the pelvis."""
+    body_box = metrics.get("body_box")
+    tail_box = metrics.get("tail_box")
+    if not body_box or not tail_box:
+        return False
+
+    height = metrics.get("height", 1.0)
+    side_distance = metrics.get("min_leg_side_distance", 0.0)
+    x_pad = max(side_distance * 0.62, height * 0.10, 0.05)
+    y_pad = max(height * 0.16, 0.06)
+    z_pad = max(height * 0.24, 0.08)
+    return (
+        point.y <= body_box["min_y"] + y_pad
+        and abs(point.x - metrics.get("midline_x", 0.0)) <= x_pad
+        and point.z <= tail_box["max_z"] + z_pad
+    )
+
+
 def filtered_binding_distances(point, raw_distances, closest_body_distance, metrics):
     """Limit candidate bones before distance biasing and weight normalization."""
+    if in_tail_region(point, metrics):
+        allowed = [
+            (distance, segment)
+            for distance, segment in raw_distances
+            if segment[0] in TAIL_BONE_NAMES or segment[0] == "pelvis"
+        ]
+        return allowed or raw_distances
+
     assigned_leg = closest_leg_prefix(point, metrics)
     if assigned_leg:
         box = metrics.get("leg_boxes", {}).get(assigned_leg, {})
@@ -396,7 +445,8 @@ def bind_with_nearest_bone_weights(mesh, armature, max_influences):
     ensure_armature_modifier(mesh, armature)
 
     group_names = {name for name, _, _ in segments}
-    for name in group_names:
+    rig_group_names = {bone.name for bone in armature.data.bones}
+    for name in rig_group_names:
         group = mesh.vertex_groups.get(name)
         if group:
             mesh.vertex_groups.remove(group)

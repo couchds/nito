@@ -1650,6 +1650,7 @@ def create_standard_quadruped(
             scale,
             lower,
             True,
+            deform=False,
         )
         foot_point = Vector(point("foot_tail"))
         foot_span = max((foot_point - Vector(point("lower_tail"))).length * 0.45, 0.08)
