@@ -702,14 +702,15 @@ def fit_orientation_score(points, fit_amount, robust=True, top_percentile=88.0):
     rear_anchor_drop = profile["spine"][0][1][2] - profile["rear_leg"]["upper_head"][2]
     head_score = end_slice_score(points, local_min.y, local_max.y, local_min.z, local_size.z, sample_from_front=True)
     tail_score = end_slice_score(points, local_min.y, local_max.y, local_min.z, local_size.z, sample_from_front=False)
-    head_bias = (head_score - tail_score) / max(head_score, tail_score, 0.001)
+    # The front/head end is usually more tapered than the rear torso, especially on horses.
+    front_taper_bias = (tail_score - head_score) / max(head_score, tail_score, 0.001)
 
     return (
         body_length / mesh_length * 6.0
         + max(0.0, foot_spread) / mesh_length * 4.0
         + max(0.0, front_anchor_drop) / max(local_size.z, 0.001) * 1.2
         + max(0.0, rear_anchor_drop) / max(local_size.z, 0.001) * 1.2
-        + head_bias * 1.5
+        + front_taper_bias * 1.5
     )
 
 
