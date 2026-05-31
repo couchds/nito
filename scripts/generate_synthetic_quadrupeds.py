@@ -251,7 +251,7 @@ SPECIES = {
         "foot_length": (0.16, 0.28),
         "foot_width": (0.045, 0.075),
         "body_noise": (0.00, 0.035),
-        "features": ("ears", "mane"),
+        "features": ("ears", "mane", "tack"),
         "leg_style": "vertical",
     },
     "dog": {
@@ -610,10 +610,85 @@ def add_head_neck_tail_mesh(
             add_tapered_tube(mesh, mid, tip, limb_radius * 0.40, limb_radius * 0.16, rng, segments=8, rings=1)
 
     if "mane" in features:
-        for index in range(5):
-            amount = index / 4.0
-            point = lerp(neck["head"], neck["tail"], amount) + Vec3(0.0, 0.0, body_depth * 0.08)
-            add_ellipsoid(mesh, point, Vec3(body_width * 0.045, body_width * 0.035, body_depth * 0.06), rng, rings=4, segments=8, noise=0.08)
+        count = rng.randint(5, 10)
+        for index in range(count):
+            amount = index / max(1, count - 1)
+            point = lerp(neck["head"], neck["tail"], amount) + Vec3(0.0, rng.uniform(-0.03, 0.03) * head_length, body_depth * uniform(rng, (0.06, 0.16)))
+            add_ellipsoid(
+                mesh,
+                point,
+                Vec3(body_width * uniform(rng, (0.035, 0.075)), body_width * uniform(rng, (0.025, 0.055)), body_depth * uniform(rng, (0.05, 0.11))),
+                rng,
+                rings=4,
+                segments=8,
+                noise=0.12,
+            )
+
+
+def add_box(mesh: MeshBuilder, center: Vec3, half_size: Vec3) -> None:
+    """Add an axis-aligned box."""
+    offsets = [
+        Vec3(-half_size.x, -half_size.y, -half_size.z),
+        Vec3(half_size.x, -half_size.y, -half_size.z),
+        Vec3(half_size.x, half_size.y, -half_size.z),
+        Vec3(-half_size.x, half_size.y, -half_size.z),
+        Vec3(-half_size.x, -half_size.y, half_size.z),
+        Vec3(half_size.x, -half_size.y, half_size.z),
+        Vec3(half_size.x, half_size.y, half_size.z),
+        Vec3(-half_size.x, half_size.y, half_size.z),
+    ]
+    start = len(mesh.vertices)
+    for offset in offsets:
+        mesh.add_vertex(center + offset)
+    for face in (
+        (0, 1, 2, 3),
+        (4, 7, 6, 5),
+        (0, 4, 5, 1),
+        (1, 5, 6, 2),
+        (2, 6, 7, 3),
+        (3, 7, 4, 0),
+    ):
+        mesh.add_face(tuple(start + index for index in face))
+
+
+def add_horse_tack_mesh(
+    mesh: MeshBuilder,
+    guide_bones: dict[str, dict[str, Vec3]],
+    params: dict[str, float | str | tuple[str, ...]],
+    rng: random.Random,
+) -> None:
+    """Add saddle, bridle, reins, and chunky stylized hoof distractors."""
+    if str(params["animal_type"]) != "horse":
+        return
+    features = tuple(params["features"]) if isinstance(params["features"], tuple) else ()
+    if "tack" not in features or rng.random() > 0.86:
+        return
+
+    body_width = float(params["body_width"])
+    body_depth = float(params["body_depth"])
+    body_length = float(params["body_length"])
+    limb_radius = float(params["limb_radius"])
+    saddle_center = Vec3(0.0, -body_length * uniform(rng, (0.04, 0.16)), float(params["shoulder_height"]) - body_depth * uniform(rng, (0.04, 0.16)))
+    add_box(mesh, saddle_center, Vec3(body_width * 0.62, body_length * 0.12, body_depth * 0.055))
+    add_box(mesh, saddle_center + Vec3(0.0, -body_length * 0.02, body_depth * 0.08), Vec3(body_width * 0.38, body_length * 0.075, body_depth * 0.08))
+
+    for side in (-1.0, 1.0):
+        strap_top = saddle_center + Vec3(side * body_width * 0.46, 0.0, -body_depth * 0.02)
+        strap_bottom = saddle_center + Vec3(side * body_width * 0.48, 0.0, -body_depth * 0.58)
+        add_tapered_tube(mesh, strap_top, strap_bottom, limb_radius * 0.28, limb_radius * 0.22, rng, segments=6, rings=1)
+        stirrup_center = strap_bottom + Vec3(side * body_width * 0.04, 0.0, -body_depth * 0.07)
+        add_box(mesh, stirrup_center, Vec3(body_width * 0.07, body_width * 0.025, body_depth * 0.055))
+
+    neck = guide_bones[GUIDE_SPINE_BONES["neck"]]
+    head = guide_bones[GUIDE_SPINE_BONES["head"]]
+    head_center = midpoint(head["head"], head["tail"])
+    muzzle = head["tail"]
+    for side in (-1.0, 1.0):
+        cheek = head_center + Vec3(side * body_width * 0.12, 0.0, -body_depth * 0.04)
+        bit = muzzle + Vec3(side * body_width * 0.13, -float(params["head_length"]) * 0.18, -body_depth * 0.02)
+        add_tapered_tube(mesh, cheek, bit, limb_radius * 0.20, limb_radius * 0.18, rng, segments=6, rings=1)
+        add_tapered_tube(mesh, bit, saddle_center + Vec3(side * body_width * 0.34, body_length * 0.05, body_depth * 0.05), limb_radius * 0.15, limb_radius * 0.10, rng, segments=6, rings=1)
+    add_tapered_tube(mesh, neck["tail"], head_center, limb_radius * 0.22, limb_radius * 0.20, rng, segments=6, rings=1)
 
 
 def add_leg_mesh(
@@ -648,6 +723,14 @@ def add_leg_mesh(
             segments=10,
             noise=0.03,
         )
+        if str(params["animal_type"]) in {"horse", "ram", "giraffe"}:
+            hoof_width = foot_width * uniform(rng, (1.6, 2.4))
+            hoof_length = foot_length * uniform(rng, (0.35, 0.55))
+            add_box(
+                mesh,
+                Vec3(paw_center.x, paw_center.y + (hoof_length * 0.18), max(0.018, paw_z - limb_radius * 0.22)),
+                Vec3(hoof_width * 0.5, hoof_length * 0.5, limb_radius * uniform(rng, (0.26, 0.46))),
+            )
 
 
 def build_landmarks(guide_bones: dict[str, dict[str, Vec3]]) -> dict[str, Vec3]:
@@ -718,6 +801,7 @@ def generate_sample(sample_id: str, sample_seed: int, random_yaw: bool) -> tuple
     add_body_mesh(mesh, guide_bones, params, rng)
     add_head_neck_tail_mesh(mesh, guide_bones, params, rng)
     add_leg_mesh(mesh, guide_bones, params, rng)
+    add_horse_tack_mesh(mesh, guide_bones, params, rng)
 
     yaw = rng.uniform(-math.pi, math.pi) if random_yaw else 0.0
     if yaw:
@@ -839,10 +923,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=20260531, help="Dataset RNG seed.")
     parser.add_argument("--train-ratio", type=float, default=0.80, help="Fraction of samples assigned to train.")
     parser.add_argument("--val-ratio", type=float, default=0.10, help="Fraction of samples assigned to validation.")
-    parser.add_argument("--no-random-yaw", action="store_false", dest="random_yaw", help="Keep all meshes +Y forward.")
+    parser.add_argument("--random-yaw", action="store_true", dest="random_yaw", help="Randomly rotate each mesh around Z.")
     parser.add_argument("--labels-only", action="store_false", dest="write_obj", help="Write labels and manifest, but skip OBJ meshes.")
     parser.add_argument("--no-clean", action="store_false", dest="clean", help="Do not remove old syn_*.obj/json outputs before writing.")
-    parser.set_defaults(random_yaw=True, write_obj=True, clean=True)
+    parser.set_defaults(random_yaw=False, write_obj=True, clean=True)
     args = parser.parse_args()
     if args.count <= 0:
         parser.error("--count must be positive.")

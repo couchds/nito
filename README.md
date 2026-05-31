@@ -111,10 +111,10 @@ Each sample writes:
 
 Current synthetic animal types are horse, dog, cat, giraffe, turtle, lizard, and ram. The generated `data/synthetic_quadrupeds/` directory is ignored by Git so the repo keeps the generator without storing bulky training assets.
 
-By default the generator applies a random yaw rotation to each sample so the eventual model cannot assume every animal faces +Y. For visual inspection, generate aligned samples with:
+By default generated samples are +Y-forward and Z-up. This is the preferred training setup because the predictor can rotate real meshes into the same canonical orientation before inference. To deliberately stress-test arbitrary yaw, opt in with `--random-yaw`:
 
 ```powershell
-python scripts/generate_synthetic_quadrupeds.py --count 20 --out data/synthetic_quadrupeds --no-random-yaw
+python scripts/generate_synthetic_quadrupeds.py --count 20 --out data/synthetic_quadrupeds --random-yaw
 ```
 
 OBJ files are mesh-only and do not contain Blender armatures. To inspect a sample with its labeled QWalk guide bones, run the Blender helper against the matching `.json` label file:
@@ -134,6 +134,28 @@ python -m venv .venv
 ```
 
 The trainer samples point clouds from the OBJ meshes, predicts the 23 guide points needed to reconstruct the QWalk guide bones, and uses `animal_type` plus `morphology_type` as auxiliary classification tasks. Training artifacts are written under `models/qwalk_guide_initializer/`, including `qwalk_guide_initializer.pt`, `metrics.json`, and a small `test_predictions_preview.jsonl`.
+
+Predict guide bones for an OBJ mesh:
+
+```powershell
+.\.venv\Scripts\python.exe scripts/predict_guide_initializer.py data/synthetic_quadrupeds/train/syn_000007.obj --checkpoint models/qwalk_guide_initializer/qwalk_guide_initializer.pt --mesh-forward-axis AUTO
+```
+
+This writes a sibling `*.qwalk_prediction.json` file with predicted guide points, reconstructed QWalk guide bones, animal probabilities, and morphology probabilities. The predictor rotates the mesh into +Y-forward canonical space before inference, then rotates predictions back. `AUTO` uses the dominant horizontal extent; pass `POS_X`, `NEG_X`, `POS_Y`, or `NEG_Y` when you know the true tail-to-head axis. The predictor also applies a small postprocess pass by default to mirror leg pairs, keep centerline bones centered, ground the feet, and keep limb joints above the ground plane.
+
+Evaluate a saved checkpoint:
+
+```powershell
+.\.venv\Scripts\python.exe scripts/evaluate_guide_initializer.py --data data/synthetic_quadrupeds --checkpoint models/qwalk_guide_initializer/qwalk_guide_initializer.pt --split test
+```
+
+Import the prediction into Blender as an editable guide armature:
+
+```powershell
+& "C:\Program Files (x86)\Steam\steamapps\common\Blender\blender.exe" --python scripts/import_synthetic_quadruped_sample.py -- data/synthetic_quadrupeds/train/syn_000007.qwalk_prediction.json
+```
+
+If Blender is on your `PATH`, `blender --python ...` works too. The same import helper accepts both synthetic label JSON files and prediction JSON files.
 
 ## Notes
 

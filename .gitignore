@@ -17,14 +17,16 @@ dist/
 *.blend@
 *.blend~
 *.autosave.blend
+*_QWalk_*.blend
 
 # Generated add-on archives
 *.zip
 
 # Generated ML datasets
-data/synthetic_quadrupeds/
+data/synthetic_quadrupeds*/
 synthetic_quadrupeds/
 models/qwalk_guide_initializer*/
+*.qwalk_prediction.json
 
 # Editor and OS noise
 .idea/
