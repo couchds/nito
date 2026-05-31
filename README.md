@@ -111,6 +111,20 @@ Each sample writes:
 
 Current synthetic animal types are horse, dog, cat, giraffe, turtle, lizard, and ram. The generated `data/synthetic_quadrupeds/` directory is ignored by Git so the repo keeps the generator without storing bulky training assets.
 
+By default the generator applies a random yaw rotation to each sample so the eventual model cannot assume every animal faces +Y. For visual inspection, generate aligned samples with:
+
+```powershell
+python scripts/generate_synthetic_quadrupeds.py --count 20 --out data/synthetic_quadrupeds --no-random-yaw
+```
+
+OBJ files are mesh-only and do not contain Blender armatures. To inspect a sample with its labeled QWalk guide bones, run the Blender helper against the matching `.json` label file:
+
+```powershell
+blender --python scripts/import_synthetic_quadruped_sample.py -- data/synthetic_quadrupeds/train/syn_000000.json
+```
+
+The helper imports the OBJ mesh with `Forward=Y` and `Up=Z`, creates an editable QWalk guide armature from the JSON label coordinates, selects both objects, and stores the synthetic `animal_type` and `morphology_type` on the guide object. If you import raw OBJ files manually, use the same `Forward=Y` and `Up=Z` axis settings.
+
 ## Notes
 
 - **Replace Keys** removes existing location/Euler rotation keys on mapped bones only inside the selected frame range.
