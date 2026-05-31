@@ -24,6 +24,7 @@ dist/
 # Generated ML datasets
 data/synthetic_quadrupeds/
 synthetic_quadrupeds/
+models/qwalk_guide_initializer*/
 
 # Editor and OS noise
 .idea/

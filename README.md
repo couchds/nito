@@ -125,6 +125,16 @@ blender --python scripts/import_synthetic_quadruped_sample.py -- data/synthetic_
 
 The helper imports the OBJ mesh with `Forward=Y` and `Up=Z`, creates an editable QWalk guide armature from the JSON label coordinates, selects both objects, and stores the synthetic `animal_type` and `morphology_type` on the guide object. If you import raw OBJ files manually, use the same `Forward=Y` and `Up=Z` axis settings.
 
+Train a first PointNet-style guide initializer from the synthetic dataset:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install torch numpy
+.\.venv\Scripts\python.exe scripts/train_guide_initializer.py --data data/synthetic_quadrupeds --epochs 40
+```
+
+The trainer samples point clouds from the OBJ meshes, predicts the 23 guide points needed to reconstruct the QWalk guide bones, and uses `animal_type` plus `morphology_type` as auxiliary classification tasks. Training artifacts are written under `models/qwalk_guide_initializer/`, including `qwalk_guide_initializer.pt`, `metrics.json`, and a small `test_predictions_preview.jsonl`.
+
 ## Notes
 
 - **Replace Keys** removes existing location/Euler rotation keys on mapped bones only inside the selected frame range.
