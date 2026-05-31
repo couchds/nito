@@ -92,6 +92,25 @@ The older **Create Fitted Quadruped Armature** button still creates a direct one
 
 Binding defaults to QWalk's nearest-bone weights, which creates real vertex groups and an Armature modifier without relying on Blender's heat weighting. The QWalk binder biases torso, head, and belly vertices away from accidental leg influence, keeps central underbody vertices on the body instead of a left or right leg, limits each vertex to a plausible leg column before blending, then prunes weak leftover weights that can make horns, mouths, loose belly fur, or the wrong leg follow the moving feet. Use the operator redo panel if you want to try Blender Automatic instead. For production results, expect to clean up vertex weights around shoulders, hips, hooves, horns, and dense fur.
 
+## Synthetic ML Dataset
+
+The `scripts/generate_synthetic_quadrupeds.py` script creates rough synthetic quadruped OBJ meshes with exact QWalk guide labels. This is intended as seed data for an ML guide initializer, not as finished animal artwork.
+
+Generate a 1,000-sample starter dataset:
+
+```powershell
+python scripts/generate_synthetic_quadrupeds.py --count 1000 --out data/synthetic_quadrupeds
+```
+
+Each sample writes:
+
+- an `.obj` proxy mesh
+- a `.json` label file with QWalk guide bone head/tail coordinates
+- `animal_type`, `morphology_type`, and mesh-space forward/left/up axes
+- a root `manifest.jsonl` and `dataset_info.json`
+
+Current synthetic animal types are horse, dog, cat, giraffe, turtle, lizard, and ram. The generated `data/synthetic_quadrupeds/` directory is ignored by Git so the repo keeps the generator without storing bulky training assets.
+
 ## Notes
 
 - **Replace Keys** removes existing location/Euler rotation keys on mapped bones only inside the selected frame range.

@@ -21,6 +21,10 @@ dist/
 # Generated add-on archives
 *.zip
 
+# Generated ML datasets
+data/synthetic_quadrupeds/
+synthetic_quadrupeds/
+
 # Editor and OS noise
 .idea/
 .vscode/
