@@ -1,0 +1,32 @@
+{
+  "blend_file": "C:\\Users\\Daniel Couch\\Desktop\\Coding\\walk-cycle-generator\\Horse_QWalk_Gold_Work.blend",
+  "mesh": "tripo_node_06e956d7-e4d0-4801-82d3-8a6d1cd4a24d",
+  "guide": "Horse_Real_Label_Guides",
+  "mesh_forward_axis": "POS_X",
+  "views": [
+    {
+      "name": "left",
+      "file": "C:\\Users\\Daniel Couch\\Desktop\\Coding\\walk-cycle-generator\\data\\real_quadrupeds\\review_horse_000_pass2\\left.png"
+    },
+    {
+      "name": "right",
+      "file": "C:\\Users\\Daniel Couch\\Desktop\\Coding\\walk-cycle-generator\\data\\real_quadrupeds\\review_horse_000_pass2\\right.png"
+    },
+    {
+      "name": "front",
+      "file": "C:\\Users\\Daniel Couch\\Desktop\\Coding\\walk-cycle-generator\\data\\real_quadrupeds\\review_horse_000_pass2\\front.png"
+    },
+    {
+      "name": "rear",
+      "file": "C:\\Users\\Daniel Couch\\Desktop\\Coding\\walk-cycle-generator\\data\\real_quadrupeds\\review_horse_000_pass2\\rear.png"
+    },
+    {
+      "name": "top",
+      "file": "C:\\Users\\Daniel Couch\\Desktop\\Coding\\walk-cycle-generator\\data\\real_quadrupeds\\review_horse_000_pass2\\top.png"
+    },
+    {
+      "name": "quarter",
+      "file": "C:\\Users\\Daniel Couch\\Desktop\\Coding\\walk-cycle-generator\\data\\real_quadrupeds\\review_horse_000_pass2\\quarter.png"
+    }
+  ]
+}

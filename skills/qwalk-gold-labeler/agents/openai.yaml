@@ -1,0 +1,4 @@
+interface:
+  display_name: "QWalk Gold Labeler"
+  short_description: "Iteratively place perfect quadruped guide skeletons"
+  default_prompt: "Use $qwalk-gold-labeler to create a verified quadruped training label from this Blender mesh."

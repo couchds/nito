@@ -137,6 +137,8 @@ The trainer samples point clouds from the OBJ meshes, predicts the 23 guide poin
 
 Real labels are treated as ground truth and are only loaded from `--real-data` when their JSON has `verified_label: true`. Use `scripts/export_qwalk_guide_label.py --verified` only after the guide placement has been visually reviewed and corrected in Blender. Candidate labels can still be tested with `--allow-unverified-real`, but they should not be used for model training.
 
+For repeatable real-label creation, use the repo-local Codex skill at `skills/qwalk-gold-labeler/SKILL.md`. It defines the gold-label loop: create a candidate guide, render side/front/rear/top/quarter review images with `scripts/render_qwalk_label_review.py`, apply exact coordinate corrections with `scripts/apply_qwalk_guide_edits.py`, repeat until every view passes, then export with `--verified`.
+
 Predict guide bones for an OBJ mesh:
 
 ```powershell

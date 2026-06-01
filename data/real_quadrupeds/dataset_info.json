@@ -1,5 +1,5 @@
 {
-  "source": "real_qwalk_label_v2",
+  "source": "real_qwalk_labels",
   "count": 1,
   "verified_count": 0,
   "animal_counts": {
@@ -15,7 +15,7 @@
     "morphology_type": [
       "ungulate"
     ],
-    "guide_bones": "QWalk guide bone head/tail coordinates in canonical +Y mesh space",
+    "guide_bones": "QWalk guide bone head/tail coordinates in mesh space",
     "landmarks": "Simplified joint/centerline landmarks derived from guide_bones",
     "axes": "forward, left, and up vectors in mesh space"
   }
