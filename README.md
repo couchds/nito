@@ -168,7 +168,7 @@ Copy-Item .env.example .env.local
   --sample-id auto_horse_000 `
   --reference-image-url "https://example.com/reference.png"
 
-.\.venv\Scripts\python.exe scripts\automated_training_workflow.py submit-tripo --sample-id auto_horse_000
+.\.venv\Scripts\python.exe scripts\automated_training_workflow.py submit-tripo --sample-id auto_horse_000 --face-limit 5000
 .\.venv\Scripts\python.exe scripts\automated_training_workflow.py poll-tripo --sample-id auto_horse_000
 .\.venv\Scripts\python.exe scripts\automated_training_workflow.py prepare-label-work --sample-id auto_horse_000 --profile HORSE
 ```

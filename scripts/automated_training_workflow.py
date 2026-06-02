@@ -57,7 +57,12 @@ def parse_args() -> argparse.Namespace:
     submit.add_argument("--pbr", action=argparse.BooleanOptionalAction, default=True)
     submit.add_argument("--quad", action=argparse.BooleanOptionalAction, default=False)
     submit.add_argument("--geometry-quality", default="", choices=("", "standard", "detailed"))
-    submit.add_argument("--face-limit", type=int, default=0)
+    submit.add_argument(
+        "--face-limit",
+        type=int,
+        default=5000,
+        help="Target output face count for Tripo3D. Use 0 to omit the API parameter.",
+    )
     submit.add_argument("--texture-alignment", default="", choices=("", "original_image", "geometry"))
 
     poll = subparsers.add_parser("poll-tripo", help="Poll Tripo3D task and download model artifacts on success.")
