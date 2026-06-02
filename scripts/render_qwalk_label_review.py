@@ -113,6 +113,8 @@ def add_joint(name: str, point: Vector, mat: bpy.types.Material, radius: float) 
 
 
 def create_review_geometry(guide: bpy.types.Object, size_hint: float) -> list[bpy.types.Object]:
+    if bpy.ops.object.mode_set.poll():
+        bpy.ops.object.mode_set(mode="OBJECT")
     mats = {key: material(f"QWalk Review {key.title()}", color) for key, color in GUIDE_COLORS.items()}
     created = []
     bevel = max(size_hint * 0.0035, 0.002)

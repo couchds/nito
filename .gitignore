@@ -11,6 +11,11 @@ build/
 dist/
 *.egg-info/
 
+# Local secrets
+.env
+.env.*
+!.env.example
+
 # Blender generated files
 *.blend1
 *.blend2
@@ -24,6 +29,7 @@ dist/
 
 # Generated ML datasets
 data/synthetic_quadrupeds*/
+data/automated_training/
 synthetic_quadrupeds/
 models/qwalk_guide_initializer*/
 *.qwalk_prediction.json
