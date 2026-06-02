@@ -11,6 +11,35 @@ Produce only verified, training-eligible guide labels. A candidate guide is not 
 
 Use this workflow for any quadruped mesh in this repo. Prefer deterministic Blender scripts over ad hoc manual edits. Do not train on real labels unless their JSON has `verified_label: true`.
 
+For API-generated assets, first use `scripts/automated_training_workflow.py prepare-label-work` to import the downloaded model, create the candidate guide, and render the initial review views. If the generated model imports with a different head-to-tail axis than expected, rerun `prepare-label-work` with `--mesh-forward-axis POS_X|NEG_X|POS_Y|NEG_Y`. Then continue with this skill's review/edit/export loop.
+
+## Agent Placement Mode
+
+When the user asks the agent to place the skeleton, do not treat the geometric initializer as the answer. Use it only as a rough starting scaffold. The agent must place an explicit anatomical label by following this loop:
+
+1. Name the landmarks before editing coordinates.
+   - Identify the tail-to-head axis and left/right side.
+   - Identify pelvis/root, spine, chest/shoulder mass, neck base, skull/muzzle endpoint, tail base, and each visible limb chain.
+   - Read [anatomical-landmarks.md](references/anatomical-landmarks.md) for the target morphology before editing.
+
+2. Author a manual edit JSON for the full skeleton or the full failing chain.
+   - Do not make isolated foot-only nudges when the upper limb or centerline is also wrong.
+   - Preserve connected chains: a child bone head should match the parent tail unless the guide bone is intentionally unconnected.
+   - Use world-space edits from Blender/review coordinates for `.blend` work.
+
+3. Render all review views and inspect each by name.
+   - Side view checks anatomy along the animal length.
+   - Top view checks midline and left/right depth.
+   - Front/rear views check limb width and symmetry.
+   - Quarter view checks whether points sit inside the mesh volume, not merely on the side silhouette.
+
+4. Report the remaining suspected errors as named landmarks.
+   - Good: "rear stifle is too far forward and hock is too low."
+   - Bad: "looks better."
+   - If the user says it is still wrong, ask them to name or screenshot the offending landmark if it is visually ambiguous, then make another explicit edit pass.
+
+5. Never mark a label verified from the agent's judgment alone when the user is actively reviewing placement. Keep the sample as a review candidate until the user says it is correct enough for training.
+
 ## Workflow
 
 1. Identify the mesh object and animal-relative forward axis.
