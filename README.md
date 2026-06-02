@@ -139,6 +139,54 @@ Real labels are treated as ground truth and are only loaded from `--real-data` w
 
 For repeatable real-label creation, use the repo-local Codex skill at `skills/qwalk-gold-labeler/SKILL.md`. It defines the gold-label loop: create a candidate guide, render side/front/rear/top/quarter review images with `scripts/render_qwalk_label_review.py`, apply exact coordinate corrections with `scripts/apply_qwalk_guide_edits.py`, repeat until every view passes, then export with `--verified`.
 
+## Automated Training Asset Workflow
+
+The `scripts/automated_training_workflow.py` script scaffolds the end-to-end real-data pipeline:
+
+1. Record a prompt and placeholder reference-image step.
+2. Submit an image-to-model task to Tripo3D.
+3. Poll and download the generated model before Tripo result URLs expire.
+4. Import the model into Blender.
+5. Create a candidate QWalk guide and render multi-view review images.
+6. Use `skills/qwalk-gold-labeler/SKILL.md` to iterate until the label is perfect.
+7. Export a verified real training label.
+
+The OpenAI image-generation call is intentionally not wired yet. For now, provide an existing public image URL or local reference image when submitting to Tripo.
+
+```powershell
+Copy-Item .env.example .env.local
+# Edit .env.local and set TRIPO_API_KEY. .env.local is ignored by Git.
+
+.\.venv\Scripts\python.exe scripts\automated_training_workflow.py init-sample `
+  --sample-id auto_horse_000 `
+  --prompt "side view of a clean stylized horse, full body, neutral pose" `
+  --animal-type horse `
+  --morphology-type ungulate `
+  --mesh-forward-axis POS_X
+
+.\.venv\Scripts\python.exe scripts\automated_training_workflow.py reference-placeholder `
+  --sample-id auto_horse_000 `
+  --reference-image-url "https://example.com/reference.png"
+
+.\.venv\Scripts\python.exe scripts\automated_training_workflow.py submit-tripo --sample-id auto_horse_000
+.\.venv\Scripts\python.exe scripts\automated_training_workflow.py poll-tripo --sample-id auto_horse_000
+.\.venv\Scripts\python.exe scripts\automated_training_workflow.py prepare-label-work --sample-id auto_horse_000 --profile HORSE
+```
+
+If the generated model imports with a different head-to-tail axis than the reference image implied, rerun only the Blender label/review stage with an override:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\automated_training_workflow.py prepare-label-work --sample-id auto_horse_000 --profile HORSE --mesh-forward-axis POS_Y
+```
+
+After the review images pass the gold-label skill checklist, export the corrected guide:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\automated_training_workflow.py export-verified --sample-id auto_horse_000 --verified
+```
+
+Omit `--verified` to export a candidate label that remains blocked from training.
+
 Predict guide bones for an OBJ mesh:
 
 ```powershell
