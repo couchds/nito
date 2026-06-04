@@ -9,8 +9,10 @@ qwalk-gold-labeler review loop.
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
+import random
 import subprocess
 import sys
 import time
@@ -24,9 +26,14 @@ from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_WORK_ROOT = REPO_ROOT / "data" / "automated_training"
+DEFAULT_PROMPT_CATALOG = REPO_ROOT / "prompts" / "quadruped_reference_prompts.json"
+DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
+DEFAULT_OPENAI_IMAGE_MODEL = "gpt-image-2"
 DEFAULT_TRIPO_BASE_URL = "https://api.tripo3d.ai/v2/openapi"
 DEFAULT_BLENDER = r"C:\Program Files (x86)\Steam\steamapps\common\Blender\blender.exe"
 MODEL_EXTENSIONS = (".glb", ".gltf", ".obj", ".fbx", ".zip")
+REFERENCE_VIEWS = ("front", "left", "right", "back")
+TRIPO_VIEW_ORDER = ("front", "left", "back", "right")
 
 
 def parse_args() -> argparse.Namespace:
@@ -41,6 +48,31 @@ def parse_args() -> argparse.Namespace:
     init.add_argument("--morphology-type", required=True)
     init.add_argument("--mesh-forward-axis", default="POS_Y", choices=("POS_X", "NEG_X", "POS_Y", "NEG_Y"))
 
+    init_batch = subparsers.add_parser("init-batch", help="Create N sample states from the prompt catalog.")
+    init_batch.add_argument("--count", type=int, required=True)
+    init_batch.add_argument("--catalog", default=str(DEFAULT_PROMPT_CATALOG))
+    init_batch.add_argument("--sample-prefix", default="auto")
+    init_batch.add_argument("--animal-type", default="", help="Optional catalog animal_type filter.")
+    init_batch.add_argument("--armor-state", default="", choices=("", "armored", "unarmored"))
+    init_batch.add_argument("--seed", type=int, default=0, help="Random seed. Defaults to current time.")
+    init_batch.add_argument("--mesh-forward-axis", default="", choices=("", "POS_X", "NEG_X", "POS_Y", "NEG_Y"))
+
+    reference_generate = subparsers.add_parser("generate-reference", help="Generate OpenAI reference art for one sample.")
+    reference_generate.add_argument("--sample-id", required=True)
+    reference_generate.add_argument("--api-key", default="", help="OpenAI API key. Defaults to OPENAI_API_KEY.")
+    reference_generate.add_argument("--base-url", default=DEFAULT_OPENAI_BASE_URL)
+    reference_generate.add_argument("--model", default="", help=f"Defaults to catalog or {DEFAULT_OPENAI_IMAGE_MODEL}.")
+    reference_generate.add_argument("--size", default="", help="Defaults to catalog image_size or 1024x1024.")
+    reference_generate.add_argument("--quality", default="", help="Defaults to catalog image_quality or medium.")
+    reference_generate.add_argument("--background", default="", choices=("", "opaque", "transparent", "auto"))
+    reference_generate.add_argument("--output-format", default="", choices=("", "png", "jpeg", "webp"))
+    reference_generate.add_argument(
+        "--views",
+        default="all",
+        help="Comma-separated subset of front,left,right,back, or all.",
+    )
+    reference_generate.add_argument("--overwrite", action="store_true")
+
     reference = subparsers.add_parser("reference-placeholder", help="Record the future reference-image step.")
     reference.add_argument("--sample-id", required=True)
     reference.add_argument("--reference-image", default="", help="Optional existing local reference image path.")
@@ -51,6 +83,11 @@ def parse_args() -> argparse.Namespace:
     submit.add_argument("--api-key", default="", help="Tripo3D API key. Defaults to TRIPO_API_KEY.")
     submit.add_argument("--base-url", default=DEFAULT_TRIPO_BASE_URL)
     submit.add_argument("--multiview-task-id", default="", help="Override state tripo_multiview_task_id.")
+    submit.add_argument(
+        "--view-image-dir",
+        default="",
+        help="Directory containing front/left/right/back images. Defaults to generated OpenAI views in state.",
+    )
     submit.add_argument("--model-version", default="v3.1-20260211")
     submit.add_argument("--texture", action=argparse.BooleanOptionalAction, default=True)
     submit.add_argument("--pbr", action=argparse.BooleanOptionalAction, default=True)
@@ -149,6 +186,15 @@ def api_key(value: str) -> str:
     return key
 
 
+def openai_api_key(value: str) -> str:
+    load_local_env(REPO_ROOT / ".env.local")
+    load_local_env(REPO_ROOT / ".env")
+    key = value or os.environ.get("OPENAI_API_KEY", "")
+    if not key:
+        raise RuntimeError("Set OPENAI_API_KEY or pass --api-key.")
+    return key
+
+
 def load_local_env(path: Path) -> None:
     """Load simple KEY=VALUE pairs without overwriting existing environment variables."""
     if not path.exists():
@@ -162,6 +208,94 @@ def load_local_env(path: Path) -> None:
         value = value.strip().strip('"').strip("'")
         if key and key not in os.environ:
             os.environ[key] = value
+
+
+def load_prompt_catalog(path: str | Path) -> dict[str, Any]:
+    catalog_path = Path(path).expanduser().resolve()
+    if not catalog_path.exists():
+        raise FileNotFoundError(f"Prompt catalog not found: {catalog_path}")
+    catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+    specs = catalog.get("specs")
+    if not isinstance(specs, list) or not specs:
+        raise RuntimeError(f"Prompt catalog must contain at least one spec: {catalog_path}")
+    return catalog
+
+
+def select_prompt_spec(
+    catalog: dict[str, Any],
+    rng: random.Random,
+    *,
+    animal_type: str = "",
+    armor_state: str = "",
+) -> dict[str, Any]:
+    specs = catalog["specs"]
+    candidates = [
+        spec
+        for spec in specs
+        if (not animal_type or spec.get("animal_type") == animal_type)
+        and (not armor_state or spec.get("armor_state") == armor_state)
+    ]
+    if not candidates:
+        filters = ", ".join(value for value in (animal_type, armor_state) if value) or "none"
+        raise RuntimeError(f"No prompt specs matched filters: {filters}")
+    selected = rng.choice(candidates)
+    if not isinstance(selected, dict):
+        raise RuntimeError(f"Invalid prompt spec in catalog: {selected}")
+    return selected
+
+
+def build_view_prompts(catalog: dict[str, Any], spec: dict[str, Any]) -> dict[str, str]:
+    defaults = catalog.get("defaults", {})
+    template = catalog.get("prompt_template") or defaults.get("prompt_template")
+    if not isinstance(template, str) or not template:
+        raise RuntimeError("Prompt catalog needs a prompt_template string.")
+    views = catalog.get("views", {})
+    if not isinstance(views, dict):
+        raise RuntimeError("Prompt catalog views must be an object.")
+
+    prompts: dict[str, str] = {}
+    values = {
+        "animal_type": spec.get("animal_type", ""),
+        "morphology_type": spec.get("morphology_type", ""),
+        "animal_description": spec.get("animal_description", ""),
+        "equipment_description": spec.get("equipment_description", ""),
+        "style_notes": spec.get("style_notes", defaults.get("style_notes", "")),
+        "negative_notes": spec.get("negative_notes", defaults.get("negative_notes", "")),
+    }
+    for view in REFERENCE_VIEWS:
+        view_instruction = views.get(view)
+        if not isinstance(view_instruction, str) or not view_instruction:
+            raise RuntimeError(f"Prompt catalog is missing view instruction: {view}")
+        prompts[view] = template.format(**values, view=view, view_instruction=view_instruction)
+    return prompts
+
+
+def fallback_view_prompts(prompt: str) -> dict[str, str]:
+    base = (
+        "Create clean orthographic reference art for a symmetrical four-legged animal 3D character. "
+        "Single animal only, centered, neutral standing pose, animation-ready proportions, full body visible, "
+        "plain white background, no text, no labels, no split panels. "
+        f"Character brief: {prompt}"
+    )
+    view_instructions = {
+        "front": "front view, animal facing the camera",
+        "left": "left side profile view, animal facing toward the viewer's left",
+        "right": "right side profile view, animal facing toward the viewer's right",
+        "back": "back view, animal facing away from the camera",
+    }
+    return {view: f"{base}. Render the {instruction}." for view, instruction in view_instructions.items()}
+
+
+def parse_reference_views(value: str) -> list[str]:
+    if value.strip().lower() == "all":
+        return list(REFERENCE_VIEWS)
+    views = [part.strip().lower() for part in value.split(",") if part.strip()]
+    invalid = [view for view in views if view not in REFERENCE_VIEWS]
+    if invalid:
+        raise RuntimeError(f"Unknown reference views: {', '.join(invalid)}")
+    if not views:
+        raise RuntimeError("At least one reference view is required.")
+    return views
 
 
 def request_json(
@@ -186,10 +320,72 @@ def request_json(
     return json.loads(text)
 
 
+def image_extension_for_format(output_format: str) -> str:
+    return ".jpg" if output_format == "jpeg" else f".{output_format}"
+
+
+def save_openai_image_item(item: dict[str, Any], output: Path) -> Path:
+    output.parent.mkdir(parents=True, exist_ok=True)
+    b64_json = item.get("b64_json")
+    if isinstance(b64_json, str) and b64_json:
+        output.write_bytes(base64.b64decode(b64_json))
+        return output
+
+    url = item.get("url")
+    if isinstance(url, str) and url.startswith(("http://", "https://")):
+        return download_named_url(url, output)
+
+    raise RuntimeError(f"OpenAI image response did not include b64_json or url: {item}")
+
+
+def redacted_openai_response(response: dict[str, Any]) -> dict[str, Any]:
+    redacted = json.loads(json.dumps(response))
+    for item in redacted.get("data", []):
+        if isinstance(item, dict) and "b64_json" in item:
+            item["b64_json"] = "<redacted>"
+    return redacted
+
+
+def generate_openai_image(
+    *,
+    base_url: str,
+    key: str,
+    model: str,
+    prompt: str,
+    size: str,
+    quality: str,
+    output_format: str,
+    background: str,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "model": model,
+        "prompt": prompt,
+        "n": 1,
+        "size": size,
+        "quality": quality,
+        "output_format": output_format,
+    }
+    if background:
+        payload["background"] = background
+    return request_json(
+        "POST",
+        f"{base_url.rstrip('/')}/images/generations",
+        key=key,
+        payload=payload,
+        timeout=600.0,
+    )
+
+
 def upload_file(base_url: str, key: str, path: Path) -> dict[str, Any]:
     boundary = f"----qwalk{uuid.uuid4().hex}"
     data = path.read_bytes()
-    content_type = "image/png" if path.suffix.lower() == ".png" else "image/jpeg"
+    suffix = path.suffix.lower()
+    content_type = {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".webp": "image/webp",
+    }.get(suffix, "application/octet-stream")
     parts = [
         f"--{boundary}\r\n".encode("utf-8"),
         (
@@ -315,6 +511,58 @@ def multiview_urls(task_response: dict[str, Any]) -> dict[str, str]:
     return urls
 
 
+def reference_images_from_dir(directory: Path) -> dict[str, str]:
+    images: dict[str, str] = {}
+    for view in REFERENCE_VIEWS:
+        matches = [
+            candidate
+            for extension in (".png", ".jpg", ".jpeg", ".webp")
+            for candidate in [directory / f"{view}{extension}"]
+            if candidate.exists()
+        ]
+        if matches:
+            images[view] = str(matches[0])
+    missing = [view for view in REFERENCE_VIEWS if view not in images]
+    if missing:
+        raise FileNotFoundError(f"Missing reference view images in {directory}: {', '.join(missing)}")
+    return images
+
+
+def reference_images_for_submit(state: dict[str, Any], view_image_dir: str) -> dict[str, str]:
+    if view_image_dir:
+        return reference_images_from_dir(Path(view_image_dir).expanduser().resolve())
+    images = state.get("openai_reference_images")
+    if not isinstance(images, dict):
+        raise RuntimeError(
+            "No OpenAI reference images found in state. Run generate-reference, pass --view-image-dir, "
+            "or use --multiview-task-id."
+        )
+    missing = [view for view in REFERENCE_VIEWS if not images.get(view)]
+    if missing:
+        raise RuntimeError(f"OpenAI reference images are incomplete: {', '.join(missing)}")
+    return {view: str(Path(images[view]).expanduser().resolve()) for view in REFERENCE_VIEWS}
+
+
+def tripo_file_payloads_from_reference_images(
+    base_url: str,
+    key: str,
+    images: dict[str, str],
+) -> tuple[list[dict[str, str]], dict[str, Any]]:
+    files: list[dict[str, str]] = []
+    uploads: dict[str, Any] = {}
+    for view in TRIPO_VIEW_ORDER:
+        image_path = Path(images[view]).expanduser().resolve()
+        if not image_path.exists():
+            raise FileNotFoundError(f"Reference image for {view} does not exist: {image_path}")
+        upload_response = upload_file(base_url, key, image_path)
+        uploads[view] = {
+            "image": str(image_path),
+            "response": upload_response,
+        }
+        files.append({"type": "image", "file_token": extract_token(upload_response)})
+    return files, uploads
+
+
 def task_status(task_response: dict[str, Any]) -> str:
     data = response_data(task_response)
     status = data.get("status") or data.get("task_status") or data.get("state")
@@ -369,6 +617,121 @@ def command_init_sample(args: argparse.Namespace) -> None:
     print(state_path(args.work_root, args.sample_id))
 
 
+def command_init_batch(args: argparse.Namespace) -> None:
+    if args.count <= 0:
+        raise RuntimeError("--count must be greater than zero.")
+    catalog = load_prompt_catalog(args.catalog)
+    seed = args.seed or int(time.time())
+    rng = random.Random(seed)
+    created: list[str] = []
+    timestamp = int(time.time())
+
+    for index in range(args.count):
+        spec = select_prompt_spec(
+            catalog,
+            rng,
+            animal_type=args.animal_type,
+            armor_state=args.armor_state,
+        )
+        sample_id = f"{args.sample_prefix}_{timestamp}_{index:04d}"
+        view_prompts = build_view_prompts(catalog, spec)
+        mesh_forward_axis = args.mesh_forward_axis or spec.get("mesh_forward_axis", "POS_Y")
+        state = {
+            "sample_id": sample_id,
+            "prompt": spec.get("animal_description", ""),
+            "animal_type": spec["animal_type"],
+            "morphology_type": spec["morphology_type"],
+            "armor_state": spec.get("armor_state", "unarmored"),
+            "mesh_forward_axis": mesh_forward_axis,
+            "label_profile": spec.get("label_profile", "AUTO"),
+            "reference_prompt_catalog": str(Path(args.catalog).expanduser().resolve()),
+            "reference_prompt_spec_id": spec.get("id", ""),
+            "reference_prompt_spec": spec,
+            "openai_reference_prompts": view_prompts,
+            "openai_reference_defaults": catalog.get("defaults", {}),
+            "batch_seed": seed,
+            "status": "initialized",
+            "created_at": int(time.time()),
+        }
+        save_state(args.work_root, sample_id, state)
+        created.append(sample_id)
+
+    print(json.dumps({"created": created, "seed": seed}, indent=2))
+
+
+def command_generate_reference(args: argparse.Namespace) -> None:
+    state = load_state(args.work_root, args.sample_id)
+    key = openai_api_key(args.api_key)
+    defaults = state.get("openai_reference_defaults", {})
+    if not isinstance(defaults, dict):
+        defaults = {}
+
+    model = args.model or defaults.get("image_model") or DEFAULT_OPENAI_IMAGE_MODEL
+    size = args.size or defaults.get("image_size") or "1024x1024"
+    quality = args.quality or defaults.get("image_quality") or "medium"
+    output_format = args.output_format or defaults.get("output_format") or "png"
+    background = args.background or defaults.get("background") or "opaque"
+    views = parse_reference_views(args.views)
+
+    prompts = state.get("openai_reference_prompts")
+    if not isinstance(prompts, dict):
+        prompts = fallback_view_prompts(state["prompt"])
+        state["openai_reference_prompts"] = prompts
+
+    reference_dir = sample_dir(args.work_root, args.sample_id) / "reference"
+    images = dict(state.get("openai_reference_images", {})) if isinstance(state.get("openai_reference_images"), dict) else {}
+    responses = (
+        dict(state.get("openai_reference_responses", {}))
+        if isinstance(state.get("openai_reference_responses"), dict)
+        else {}
+    )
+
+    for view in views:
+        output = reference_dir / f"{view}{image_extension_for_format(output_format)}"
+        if output.exists() and not args.overwrite:
+            images[view] = str(output)
+            print(f"Skipping existing {view} reference: {output}")
+            continue
+
+        prompt = prompts.get(view)
+        if not isinstance(prompt, str) or not prompt:
+            raise RuntimeError(f"No OpenAI prompt available for view: {view}")
+        response = generate_openai_image(
+            base_url=args.base_url,
+            key=key,
+            model=str(model),
+            prompt=prompt,
+            size=str(size),
+            quality=str(quality),
+            output_format=str(output_format),
+            background=str(background),
+        )
+        data = response.get("data")
+        if not isinstance(data, list) or not data or not isinstance(data[0], dict):
+            raise RuntimeError(f"Unexpected OpenAI image response: {response}")
+        save_openai_image_item(data[0], output)
+        images[view] = str(output)
+        responses[view] = redacted_openai_response(response)
+        print(f"Generated {view} reference: {output}")
+
+    state["openai_reference_images"] = images
+    state["openai_reference_responses"] = responses
+    state["openai_reference_generation"] = {
+        "model": model,
+        "size": size,
+        "quality": quality,
+        "output_format": output_format,
+        "background": background,
+        "views": views,
+        "created_at": int(time.time()),
+    }
+    if images.get("front"):
+        state["reference_image"] = images["front"]
+    state["reference_status"] = "openai_generated"
+    state["status"] = "openai_reference_generated"
+    save_state(args.work_root, args.sample_id, state)
+
+
 def command_reference_placeholder(args: argparse.Namespace) -> None:
     state = load_state(args.work_root, args.sample_id)
     directory = sample_dir(args.work_root, args.sample_id)
@@ -380,7 +743,7 @@ def command_reference_placeholder(args: argparse.Namespace) -> None:
     state["reference_status"] = "placeholder"
     state["status"] = "reference_placeholder_recorded"
     save_state(args.work_root, args.sample_id, state)
-    print("Recorded placeholder reference step. OpenAI image generation is intentionally not wired yet.")
+    print("Recorded placeholder reference step.")
 
 
 def command_submit_tripo(args: argparse.Namespace) -> None:
@@ -388,17 +751,25 @@ def command_submit_tripo(args: argparse.Namespace) -> None:
     key = api_key(args.api_key)
     base_url = args.base_url.rstrip("/")
     multiview_task_id = args.multiview_task_id or state.get("tripo_multiview_task_id", "")
-    if not multiview_task_id:
-        raise RuntimeError("submit-tripo requires a multiview task. Run generate-multiview first or pass --multiview-task-id.")
 
     payload: dict[str, Any] = {
         "type": "multiview_to_model",
-        "original_task_id": multiview_task_id,
         "model_version": args.model_version,
         "texture": args.texture,
         "pbr": args.pbr,
         "quad": args.quad,
     }
+    if multiview_task_id:
+        payload["original_task_id"] = multiview_task_id
+        state["tripo_model_source"] = "tripo_multiview_task"
+        state["tripo_model_multiview_task_id"] = multiview_task_id
+    else:
+        reference_images = reference_images_for_submit(state, args.view_image_dir)
+        files, uploads = tripo_file_payloads_from_reference_images(base_url, key, reference_images)
+        payload["files"] = files
+        state["tripo_model_source"] = "openai_reference_views"
+        state["tripo_model_reference_images"] = reference_images
+        state["tripo_model_reference_uploads"] = uploads
     if args.geometry_quality:
         payload["geometry_quality"] = args.geometry_quality
     if args.face_limit > 0:
@@ -414,8 +785,6 @@ def command_submit_tripo(args: argparse.Namespace) -> None:
     state["tripo_task_payload"] = payload
     state["tripo_task_response"] = response
     state["tripo_task_id"] = task_id
-    state["tripo_model_source"] = "multiview"
-    state["tripo_model_multiview_task_id"] = multiview_task_id
     state["status"] = "tripo_multiview_model_submitted"
     save_state(args.work_root, args.sample_id, state)
     print(f"Submitted Tripo multiview-to-model task: {task_id}")
@@ -662,6 +1031,8 @@ def main() -> None:
     args = parse_args()
     handlers = {
         "init-sample": command_init_sample,
+        "init-batch": command_init_batch,
+        "generate-reference": command_generate_reference,
         "reference-placeholder": command_reference_placeholder,
         "submit-tripo": command_submit_tripo,
         "generate-multiview": command_generate_multiview,

@@ -143,8 +143,8 @@ For repeatable real-label creation, use the repo-local Codex skill at `skills/qw
 
 The `scripts/automated_training_workflow.py` script scaffolds the end-to-end real-data pipeline:
 
-1. Record a prompt and placeholder reference-image step.
-2. Ask Tripo3D to generate front/left/back/right reference images from the single reference.
+1. Create one or more catalog-backed sample specs.
+2. Generate front/left/right/back reference art with OpenAI `gpt-image-2`.
 3. Submit a multiview-to-model task to Tripo3D from those generated views.
 4. Poll and download the generated model before Tripo result URLs expire.
 5. Import the model into Blender.
@@ -152,32 +152,34 @@ The `scripts/automated_training_workflow.py` script scaffolds the end-to-end rea
 7. Use `skills/qwalk-gold-labeler/SKILL.md` to iterate until the label is perfect.
 8. Export a verified real training label.
 
-The OpenAI image-generation call is intentionally not wired yet. For now, provide an existing public image URL or local reference image when generating Tripo multiview inputs. Direct single-image-to-model generation is intentionally not supported by this workflow.
+Sample prompts live in `prompts/quadruped_reference_prompts.json`. The catalog stores animal type, morphology type, armor state, mesh axis defaults, and the per-view prompt template used for OpenAI reference generation. Generated workflow state is written under `data/automated_training/`, which is ignored by Git.
 
 ```powershell
 Copy-Item .env.example .env.local
-# Edit .env.local and set TRIPO_API_KEY. .env.local is ignored by Git.
+# Edit .env.local and set OPENAI_API_KEY and TRIPO_API_KEY. .env.local is ignored by Git.
 
-.\.venv\Scripts\python.exe scripts\automated_training_workflow.py init-sample `
-  --sample-id auto_horse_000 `
-  --prompt "side view of a clean stylized horse, full body, neutral pose" `
-  --animal-type horse `
-  --morphology-type ungulate `
-  --mesh-forward-axis POS_X
+.\.venv\Scripts\python.exe scripts\automated_training_workflow.py init-batch `
+  --count 4 `
+  --sample-prefix qwalk `
+  --seed 42
 
-.\.venv\Scripts\python.exe scripts\automated_training_workflow.py reference-placeholder `
-  --sample-id auto_horse_000 `
-  --reference-image-url "https://example.com/reference.png"
+$sampleId = "paste_created_sample_id_here"
+.\.venv\Scripts\python.exe scripts\automated_training_workflow.py generate-reference --sample-id $sampleId
 
-.\.venv\Scripts\python.exe scripts\automated_training_workflow.py generate-multiview --sample-id auto_horse_000
-.\.venv\Scripts\python.exe scripts\automated_training_workflow.py submit-tripo --sample-id auto_horse_000 --face-limit 5000
-.\.venv\Scripts\python.exe scripts\automated_training_workflow.py poll-tripo --sample-id auto_horse_000
-.\.venv\Scripts\python.exe scripts\automated_training_workflow.py prepare-label-work --sample-id auto_horse_000 --profile HORSE
+.\.venv\Scripts\python.exe scripts\automated_training_workflow.py submit-tripo --sample-id $sampleId --face-limit 5000
+.\.venv\Scripts\python.exe scripts\automated_training_workflow.py poll-tripo --sample-id $sampleId
+.\.venv\Scripts\python.exe scripts\automated_training_workflow.py prepare-label-work --sample-id $sampleId --profile AUTO
 ```
 
-`generate-multiview` submits Tripo3D's `generate_multiview_image` task, then stores `front`, `left`, `back`, and `right` images under the sample's `multiview/` directory. Downloading those task-result images is only local artifact retrieval; the Tripo generation request itself is the credit-consuming step.
+`init-batch` samples from the prompt catalog and creates resumable per-sample state. Use `--animal-type dog` or `--armor-state armored` to restrict the random choices. The sample IDs include the current timestamp; copy the actual IDs from command output.
+
+`generate-reference` calls OpenAI once for each requested view and stores `front`, `left`, `right`, and `back` images under the sample's `reference/` directory. By default it uses the catalog image settings, currently `gpt-image-2`, `1024x1024`, `medium`, opaque PNG output.
+
+`submit-tripo` now prefers generated OpenAI view images when no Tripo multiview task ID is present. It uploads the local images to Tripo3D and submits `multiview_to_model` in Tripo's required order: front, left, back, right. The `--face-limit` value can be randomized by callers; values from 3000 to 8000 are the intended training range.
+
+The older Tripo-generated multiview path is still available for experiments. `generate-multiview` submits Tripo3D's `generate_multiview_image` task, then stores `front`, `left`, `back`, and `right` images under the sample's `multiview/` directory. Downloading those task-result images is only local artifact retrieval; the Tripo generation request itself is the credit-consuming step.
 If image download fails after task completion, rerun `poll-multiview --sample-id <id>` to query the existing task and retry the local downloads without submitting another generation.
-`submit-tripo` submits Tripo3D's `multiview_to_model` task using the saved multiview task ID. It does not accept a direct reference image; run `generate-multiview` first, or pass `--multiview-task-id` for a previously generated multiview task.
+Pass `--multiview-task-id` to `submit-tripo` to use a previously generated Tripo multiview task instead of OpenAI view images.
 
 If the generated model imports with a different head-to-tail axis than the reference image implied, rerun only the Blender label/review stage with an override:
 

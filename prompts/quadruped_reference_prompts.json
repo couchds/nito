@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "defaults": {
+    "image_model": "gpt-image-2",
+    "image_size": "1024x1024",
+    "image_quality": "medium",
+    "background": "opaque",
+    "output_format": "png",
+    "style_notes": "clean stylized 3D game character concept art, orthographic model-sheet lighting, animation-ready proportions, symmetrical anatomy, clear silhouette, full body visible, centered on a plain white background",
+    "negative_notes": "no text, no labels, no watermark, no ground grid, no dramatic perspective, no cropped limbs, no extra characters, no duplicate animal, no action pose"
+  },
+  "prompt_template": "Create reference art for one symmetrical four-legged animal intended for Tripo3D mesh generation. Animal: {animal_description}. Equipment: {equipment_description}. View: {view_instruction}. Style: {style_notes}. Constraints: neutral standing pose, legs visible and separated, head-tail body axis clear, left and right sides anatomically balanced, surface details simple enough for a clean low-poly mesh. Avoid: {negative_notes}.",
+  "views": {
+    "front": "front orthographic view, animal facing directly toward the camera",
+    "left": "left side orthographic profile, animal facing toward the viewer's left",
+    "right": "right side orthographic profile, animal facing toward the viewer's right",
+    "back": "back orthographic view, animal facing directly away from the camera"
+  },
+  "specs": [
+    {
+      "id": "dog_light_armor",
+      "animal_type": "dog",
+      "morphology_type": "canid",
+      "armor_state": "armored",
+      "mesh_forward_axis": "POS_Y",
+      "label_profile": "MEDIUM",
+      "animal_description": "athletic medium-sized dog with a straight tail, alert ears, lean chest, and balanced working-dog proportions",
+      "equipment_description": "light symmetrical leather-and-brushed-steel adventuring armor on the chest, shoulders, and hips, with all leg joints unobstructed"
+    },
+    {
+      "id": "cat_unarmored",
+      "animal_type": "cat",
+      "morphology_type": "feline",
+      "armor_state": "unarmored",
+      "mesh_forward_axis": "POS_Y",
+      "label_profile": "MEDIUM",
+      "animal_description": "sleek domestic cat with upright ears, long tail, compact paws, and flexible feline proportions",
+      "equipment_description": "none, visible natural fur and anatomy with simple markings"
+    },
+    {
+      "id": "cat_scout_armor",
+      "animal_type": "cat",
+      "morphology_type": "feline",
+      "armor_state": "armored",
+      "mesh_forward_axis": "POS_Y",
+      "label_profile": "MEDIUM",
+      "animal_description": "slim agile cat with upright ears, long tail, compact paws, and balanced feline proportions",
+      "equipment_description": "minimal symmetrical scout armor with a small chest harness, shoulder plates, and hip plates, leaving knees, elbows, ankles, and paws clear"
+    },
+    {
+      "id": "frog_unarmored",
+      "animal_type": "frog",
+      "morphology_type": "amphibian",
+      "armor_state": "unarmored",
+      "mesh_forward_axis": "POS_Y",
+      "label_profile": "STOCKY",
+      "animal_description": "stocky frog with wide-set eyes, broad body, short front legs, powerful folded rear legs, and webbed feet",
+      "equipment_description": "none, smooth natural skin with simple color patterning"
+    },
+    {
+      "id": "ram_plate_armor",
+      "animal_type": "ram",
+      "morphology_type": "ungulate",
+      "armor_state": "armored",
+      "mesh_forward_axis": "POS_Y",
+      "label_profile": "STOCKY",
+      "animal_description": "stocky ram with curled horns, sturdy hooves, compact torso, and strong shoulders",
+      "equipment_description": "symmetrical fantasy plate barding over chest and flanks, with clean open gaps around knees, ankles, and hooves"
+    },
+    {
+      "id": "rabbit_unarmored",
+      "animal_type": "rabbit",
+      "morphology_type": "lagomorph",
+      "armor_state": "unarmored",
+      "mesh_forward_axis": "POS_Y",
+      "label_profile": "STOCKY",
+      "animal_description": "rabbit with long upright ears, compact torso, small front paws, large rear feet, and a short tail",
+      "equipment_description": "none, soft simple fur silhouette with anatomy visible"
+    },
+    {
+      "id": "turtle_unarmored",
+      "animal_type": "turtle",
+      "morphology_type": "reptile_shell",
+      "armor_state": "unarmored",
+      "mesh_forward_axis": "POS_Y",
+      "label_profile": "STOCKY",
+      "animal_description": "low turtle with domed shell, short tail, sturdy head and neck, and four clearly visible walking legs",
+      "equipment_description": "none, natural shell plates simplified into readable broad shapes"
+    },
+    {
+      "id": "deer_unarmored",
+      "animal_type": "deer",
+      "morphology_type": "ungulate",
+      "armor_state": "unarmored",
+      "mesh_forward_axis": "POS_Y",
+      "label_profile": "HORSE",
+      "animal_description": "slender deer with long legs, small hooves, narrow chest, short tail, and modest antlers",
+      "equipment_description": "none, natural coat with subtle markings and unobstructed joints"
+    }
+  ]
+}
