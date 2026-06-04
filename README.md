@@ -144,14 +144,15 @@ For repeatable real-label creation, use the repo-local Codex skill at `skills/qw
 The `scripts/automated_training_workflow.py` script scaffolds the end-to-end real-data pipeline:
 
 1. Record a prompt and placeholder reference-image step.
-2. Submit an image-to-model task to Tripo3D.
-3. Poll and download the generated model before Tripo result URLs expire.
-4. Import the model into Blender.
-5. Create a candidate QWalk guide and render multi-view review images.
-6. Use `skills/qwalk-gold-labeler/SKILL.md` to iterate until the label is perfect.
-7. Export a verified real training label.
+2. Ask Tripo3D to generate front/left/back/right reference images from the single reference.
+3. Submit a multiview-to-model task to Tripo3D from those generated views.
+4. Poll and download the generated model before Tripo result URLs expire.
+5. Import the model into Blender.
+6. Create a candidate QWalk guide and render multi-view review images.
+7. Use `skills/qwalk-gold-labeler/SKILL.md` to iterate until the label is perfect.
+8. Export a verified real training label.
 
-The OpenAI image-generation call is intentionally not wired yet. For now, provide an existing public image URL or local reference image when submitting to Tripo.
+The OpenAI image-generation call is intentionally not wired yet. For now, provide an existing public image URL or local reference image when generating Tripo multiview inputs. Direct single-image-to-model generation is intentionally not supported by this workflow.
 
 ```powershell
 Copy-Item .env.example .env.local
@@ -168,10 +169,15 @@ Copy-Item .env.example .env.local
   --sample-id auto_horse_000 `
   --reference-image-url "https://example.com/reference.png"
 
+.\.venv\Scripts\python.exe scripts\automated_training_workflow.py generate-multiview --sample-id auto_horse_000
 .\.venv\Scripts\python.exe scripts\automated_training_workflow.py submit-tripo --sample-id auto_horse_000 --face-limit 5000
 .\.venv\Scripts\python.exe scripts\automated_training_workflow.py poll-tripo --sample-id auto_horse_000
 .\.venv\Scripts\python.exe scripts\automated_training_workflow.py prepare-label-work --sample-id auto_horse_000 --profile HORSE
 ```
+
+`generate-multiview` submits Tripo3D's `generate_multiview_image` task, then stores `front`, `left`, `back`, and `right` images under the sample's `multiview/` directory. Downloading those task-result images is only local artifact retrieval; the Tripo generation request itself is the credit-consuming step.
+If image download fails after task completion, rerun `poll-multiview --sample-id <id>` to query the existing task and retry the local downloads without submitting another generation.
+`submit-tripo` submits Tripo3D's `multiview_to_model` task using the saved multiview task ID. It does not accept a direct reference image; run `generate-multiview` first, or pass `--multiview-task-id` for a previously generated multiview task.
 
 If the generated model imports with a different head-to-tail axis than the reference image implied, rerun only the Blender label/review stage with an override:
 
