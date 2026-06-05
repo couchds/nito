@@ -16,6 +16,7 @@ const elements = {
   runForm: document.querySelector("#runForm"),
   runButton: document.querySelector("#runButton"),
   sampleMorphologySelect: document.querySelector("#sampleMorphologySelect"),
+  bodyPlanExamples: document.querySelector("#bodyPlanExamples"),
   variantTagList: document.querySelector("#variantTagList"),
   batchCount: document.querySelector("#batchCount"),
   sampleCount: document.querySelector("#sampleCount"),
@@ -115,7 +116,19 @@ function renderSelectOptions(select, values, fallbackValue, fallbackLabel) {
 
 function renderLabelSelects() {
   renderSelectOptions(elements.sampleMorphologySelect, state.catalog.body_plans || catalogValues("morphology_type"), "", "Select body plan");
+  renderBodyPlanExamples();
   renderVariantTags();
+}
+
+function renderBodyPlanExamples() {
+  const selected = elements.sampleMorphologySelect.value;
+  const examples = state.catalog.label_schema?.body_plan_examples || {};
+  const selectedExamples = examples[selected];
+  if (Array.isArray(selectedExamples) && selectedExamples.length) {
+    elements.bodyPlanExamples.textContent = `Examples: ${selectedExamples.slice(0, 2).join(", ")}.`;
+    return;
+  }
+  elements.bodyPlanExamples.textContent = "Examples: medium quadruped (dog, cat), hind-leg dominant (frog, rabbit).";
 }
 
 function renderVariantTags() {
@@ -503,6 +516,7 @@ document.addEventListener("click", (event) => {
 });
 
 elements.refreshButton.addEventListener("click", loadState);
+elements.sampleMorphologySelect.addEventListener("change", renderBodyPlanExamples);
 elements.sampleForm.addEventListener("submit", createSample);
 elements.runForm.addEventListener("submit", startBatch);
 elements.batchList.addEventListener("click", (event) => {

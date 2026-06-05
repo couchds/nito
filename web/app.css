@@ -99,6 +99,13 @@ label {
   font-weight: 650;
 }
 
+.field-help {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
 input,
 select,
 textarea {

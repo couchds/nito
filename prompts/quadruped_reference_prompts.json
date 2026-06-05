@@ -39,6 +39,15 @@
       "long_body_quadruped",
       "hind_leg_dominant"
     ],
+    "body_plan_examples": {
+      "medium_quadruped": ["dog", "cat"],
+      "stocky_quadruped": ["bear", "ram"],
+      "long_legged_ungulate": ["deer", "horse"],
+      "low_reptile": ["lizard", "crocodile"],
+      "shell_reptile": ["turtle", "tortoise"],
+      "long_body_quadruped": ["otter", "ferret"],
+      "hind_leg_dominant": ["frog", "rabbit"]
+    },
     "variant_tags": [
       "armored",
       "unarmored",
