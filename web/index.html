@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>QWalk Asset Pipeline</title>
+    <link rel="stylesheet" href="/static/app.css">
+    <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>QWalk Asset Pipeline</h1>
+        <p id="statusLine">Loading workflow state</p>
+      </div>
+      <div class="topbar-actions">
+        <button id="refreshButton" type="button">Refresh</button>
+      </div>
+    </header>
+
+    <main class="shell">
+      <aside class="control-panel">
+        <form id="runForm">
+          <section class="panel-section">
+            <h2>Batch</h2>
+            <label>
+              Count
+              <input id="countInput" name="count" type="number" min="1" max="100" value="4">
+            </label>
+            <label>
+              Prefix
+              <input id="prefixInput" name="samplePrefix" type="text" value="ui">
+            </label>
+            <label>
+              Seed
+              <input id="seedInput" name="seed" type="number" min="0" value="0">
+            </label>
+          </section>
+
+          <section class="panel-section">
+            <h2>Catalog</h2>
+            <label>
+              Animal
+              <select id="animalSelect" name="animalType">
+                <option value="all">All animals</option>
+              </select>
+            </label>
+            <label>
+              Armor
+              <select id="armorSelect" name="armorState">
+                <option value="all">Any</option>
+                <option value="armored">Armored</option>
+                <option value="unarmored">Unarmored</option>
+              </select>
+            </label>
+          </section>
+
+          <section class="panel-section">
+            <h2>Tripo</h2>
+            <div class="number-row">
+              <label>
+                Min faces
+                <input id="faceMinInput" name="faceLimitMin" type="number" min="1" value="3000">
+              </label>
+              <label>
+                Max faces
+                <input id="faceMaxInput" name="faceLimitMax" type="number" min="1" value="8000">
+              </label>
+            </div>
+          </section>
+
+          <section class="panel-section switches">
+            <label class="switch-row">
+              <input id="dryRunInput" name="dryRun" type="checkbox" checked>
+              <span>Dry run</span>
+            </label>
+            <label class="switch-row">
+              <input id="prepareInput" name="prepareLabelWork" type="checkbox">
+              <span>Prepare Blender labels</span>
+            </label>
+            <label class="switch-row">
+              <input id="continueInput" name="continueOnError" type="checkbox" checked>
+              <span>Continue on error</span>
+            </label>
+          </section>
+
+          <button id="runButton" class="primary-action" type="submit">Run Batch</button>
+        </form>
+      </aside>
+
+      <section class="workspace">
+        <nav class="tabs" aria-label="Views">
+          <button class="tab is-active" type="button" data-view="overview">Overview</button>
+          <button class="tab" type="button" data-view="samples">Samples</button>
+          <button class="tab" type="button" data-view="jobs">Jobs</button>
+        </nav>
+
+        <section id="overviewView" class="view is-active">
+          <div class="metric-strip">
+            <div>
+              <span id="sampleCount">0</span>
+              <p>Samples</p>
+            </div>
+            <div>
+              <span id="runCount">0</span>
+              <p>Runs</p>
+            </div>
+            <div>
+              <span id="jobCount">0</span>
+              <p>Jobs</p>
+            </div>
+          </div>
+
+          <section class="content-band">
+            <div class="section-heading">
+              <h2>Prompt Catalog</h2>
+              <span id="catalogPath"></span>
+            </div>
+            <div id="specGrid" class="spec-grid"></div>
+          </section>
+
+          <section class="content-band">
+            <div class="section-heading">
+              <h2>Recent Runs</h2>
+            </div>
+            <div id="runList" class="run-list"></div>
+          </section>
+        </section>
+
+        <section id="samplesView" class="view">
+          <div class="section-heading">
+            <h2>Samples</h2>
+          </div>
+          <div class="sample-workbench">
+            <div id="sampleList" class="sample-list"></div>
+            <div id="sampleDetail" class="sample-detail">
+              <p class="empty">Select a sample.</p>
+            </div>
+          </div>
+        </section>
+
+        <section id="jobsView" class="view">
+          <div class="section-heading">
+            <h2>Jobs</h2>
+          </div>
+          <div id="jobList" class="job-list"></div>
+          <pre id="jobLog" class="job-log">Select a job to view output.</pre>
+        </section>
+      </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

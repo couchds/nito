@@ -177,6 +177,25 @@ $sampleId = "paste_created_sample_id_here"
 
 `submit-tripo` now prefers generated OpenAI view images when no Tripo multiview task ID is present. It uploads the local images to Tripo3D and submits `multiview_to_model` in Tripo's required order: front, left, back, right. The `--face-limit` value can be randomized by callers; values from 3000 to 8000 are the intended training range.
 
+For local batch generation, use `run-batch`. It creates `N` catalog-backed samples, generates OpenAI reference views, submits each model to Tripo3D with a random `--face-limit` between 3000 and 8000, polls/downloads the result, and writes a batch summary under `data/automated_training/batch_runs/`.
+
+```powershell
+.\.venv\Scripts\python.exe scripts\automated_training_workflow.py run-batch `
+  --count 8 `
+  --sample-prefix qwalk `
+  --seed 42
+```
+
+Add `--prepare-label-work` to immediately import each downloaded model into Blender, create candidate QWalk guides, and render review images for manual correction. Use `--dry-run` to create local sample state and print the planned random face counts without calling OpenAI or Tripo3D.
+
+Start the local web UI when you want a dashboard over the same batch runner:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\qwalk_ui_server.py
+```
+
+Then open `http://127.0.0.1:8765`. The UI reads the prompt catalog, launches `run-batch` jobs, shows recent batch summaries, and displays generated reference thumbnails when they exist.
+
 The older Tripo-generated multiview path is still available for experiments. `generate-multiview` submits Tripo3D's `generate_multiview_image` task, then stores `front`, `left`, `back`, and `right` images under the sample's `multiview/` directory. Downloading those task-result images is only local artifact retrieval; the Tripo generation request itself is the credit-consuming step.
 If image download fails after task completion, rerun `poll-multiview --sample-id <id>` to query the existing task and retry the local downloads without submitting another generation.
 Pass `--multiview-task-id` to `submit-tripo` to use a previously generated Tripo multiview task instead of OpenAI view images.

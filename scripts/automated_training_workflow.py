@@ -1,9 +1,8 @@
 """Resumable workflow for generating and gold-labeling quadruped training assets.
 
-The OpenAI image generation step is intentionally a placeholder for now. The
-Tripo3D and Blender handoff steps are implemented so generated model artifacts
-can be downloaded, imported into Blender, and prepared for the repo-local
-qwalk-gold-labeler review loop.
+The workflow generates multi-view OpenAI reference art, sends those references
+to Tripo3D, downloads generated model artifacts, and prepares Blender files for
+the repo-local qwalk-gold-labeler review loop.
 """
 
 from __future__ import annotations
@@ -56,6 +55,48 @@ def parse_args() -> argparse.Namespace:
     init_batch.add_argument("--armor-state", default="", choices=("", "armored", "unarmored"))
     init_batch.add_argument("--seed", type=int, default=0, help="Random seed. Defaults to current time.")
     init_batch.add_argument("--mesh-forward-axis", default="", choices=("", "POS_X", "NEG_X", "POS_Y", "NEG_Y"))
+
+    run_batch = subparsers.add_parser(
+        "run-batch",
+        help="Create N catalog samples and run them through reference art, Tripo, and optional Blender prep.",
+    )
+    run_batch.add_argument("--count", type=int, required=True)
+    run_batch.add_argument("--catalog", default=str(DEFAULT_PROMPT_CATALOG))
+    run_batch.add_argument("--sample-prefix", default="auto")
+    run_batch.add_argument("--animal-type", default="", help="Optional catalog animal_type filter.")
+    run_batch.add_argument("--armor-state", default="", choices=("", "armored", "unarmored"))
+    run_batch.add_argument("--seed", type=int, default=0, help="Random seed. Defaults to current time.")
+    run_batch.add_argument("--mesh-forward-axis", default="", choices=("", "POS_X", "NEG_X", "POS_Y", "NEG_Y"))
+    run_batch.add_argument("--openai-api-key", default="", help="OpenAI API key. Defaults to OPENAI_API_KEY.")
+    run_batch.add_argument("--openai-base-url", default=DEFAULT_OPENAI_BASE_URL)
+    run_batch.add_argument("--openai-model", default="", help=f"Defaults to catalog or {DEFAULT_OPENAI_IMAGE_MODEL}.")
+    run_batch.add_argument("--image-size", default="", help="Defaults to catalog image_size or 1024x1024.")
+    run_batch.add_argument("--image-quality", default="", help="Defaults to catalog image_quality or medium.")
+    run_batch.add_argument("--background", default="", choices=("", "opaque", "transparent", "auto"))
+    run_batch.add_argument("--output-format", default="", choices=("", "png", "jpeg", "webp"))
+    run_batch.add_argument("--reference-views", default="all")
+    run_batch.add_argument("--overwrite-reference", action="store_true")
+    run_batch.add_argument("--tripo-api-key", default="", help="Tripo3D API key. Defaults to TRIPO_API_KEY.")
+    run_batch.add_argument("--tripo-base-url", default=DEFAULT_TRIPO_BASE_URL)
+    run_batch.add_argument("--model-version", default="v3.1-20260211")
+    run_batch.add_argument("--texture", action=argparse.BooleanOptionalAction, default=True)
+    run_batch.add_argument("--pbr", action=argparse.BooleanOptionalAction, default=True)
+    run_batch.add_argument("--quad", action=argparse.BooleanOptionalAction, default=False)
+    run_batch.add_argument("--geometry-quality", default="", choices=("", "standard", "detailed"))
+    run_batch.add_argument("--texture-alignment", default="", choices=("", "original_image", "geometry"))
+    run_batch.add_argument("--face-limit-min", type=int, default=3000)
+    run_batch.add_argument("--face-limit-max", type=int, default=8000)
+    run_batch.add_argument("--poll-interval", type=float, default=15.0)
+    run_batch.add_argument("--poll-timeout", type=float, default=1800.0)
+    run_batch.add_argument("--no-poll", action="store_true")
+    run_batch.add_argument("--no-download", action="store_true")
+    run_batch.add_argument("--prepare-label-work", action="store_true")
+    run_batch.add_argument("--blender", default=os.environ.get("BLENDER_EXE", DEFAULT_BLENDER))
+    run_batch.add_argument("--profile", default="", choices=("", "AUTO", "MEDIUM", "STOCKY", "HORSE"))
+    run_batch.add_argument("--resolution", type=int, default=1200)
+    run_batch.add_argument("--no-join-meshes", action="store_true")
+    run_batch.add_argument("--continue-on-error", action="store_true")
+    run_batch.add_argument("--dry-run", action="store_true", help="Create local sample state and print the plan only.")
 
     reference_generate = subparsers.add_parser("generate-reference", help="Generate OpenAI reference art for one sample.")
     reference_generate.add_argument("--sample-id", required=True)
@@ -603,6 +644,58 @@ def require_model_file(state: dict[str, Any], override: str = "") -> Path:
     return model_file
 
 
+def create_batch_states(
+    *,
+    work_root: str | Path,
+    count: int,
+    catalog_path: str | Path,
+    sample_prefix: str,
+    animal_type: str,
+    armor_state: str,
+    seed: int,
+    mesh_forward_axis: str,
+) -> tuple[list[str], int]:
+    if count <= 0:
+        raise RuntimeError("--count must be greater than zero.")
+    catalog = load_prompt_catalog(catalog_path)
+    resolved_seed = seed or int(time.time())
+    rng = random.Random(resolved_seed)
+    created: list[str] = []
+    timestamp = int(time.time())
+
+    for index in range(count):
+        spec = select_prompt_spec(
+            catalog,
+            rng,
+            animal_type=animal_type,
+            armor_state=armor_state,
+        )
+        sample_id = f"{sample_prefix}_{timestamp}_{index:04d}"
+        view_prompts = build_view_prompts(catalog, spec)
+        resolved_mesh_forward_axis = mesh_forward_axis or spec.get("mesh_forward_axis", "POS_Y")
+        state = {
+            "sample_id": sample_id,
+            "prompt": spec.get("animal_description", ""),
+            "animal_type": spec["animal_type"],
+            "morphology_type": spec["morphology_type"],
+            "armor_state": spec.get("armor_state", "unarmored"),
+            "mesh_forward_axis": resolved_mesh_forward_axis,
+            "label_profile": spec.get("label_profile", "AUTO"),
+            "reference_prompt_catalog": str(Path(catalog_path).expanduser().resolve()),
+            "reference_prompt_spec_id": spec.get("id", ""),
+            "reference_prompt_spec": spec,
+            "openai_reference_prompts": view_prompts,
+            "openai_reference_defaults": catalog.get("defaults", {}),
+            "batch_seed": resolved_seed,
+            "status": "initialized",
+            "created_at": int(time.time()),
+        }
+        save_state(work_root, sample_id, state)
+        created.append(sample_id)
+
+    return created, resolved_seed
+
+
 def command_init_sample(args: argparse.Namespace) -> None:
     state = {
         "sample_id": args.sample_id,
@@ -618,45 +711,181 @@ def command_init_sample(args: argparse.Namespace) -> None:
 
 
 def command_init_batch(args: argparse.Namespace) -> None:
-    if args.count <= 0:
-        raise RuntimeError("--count must be greater than zero.")
-    catalog = load_prompt_catalog(args.catalog)
-    seed = args.seed or int(time.time())
-    rng = random.Random(seed)
-    created: list[str] = []
-    timestamp = int(time.time())
-
-    for index in range(args.count):
-        spec = select_prompt_spec(
-            catalog,
-            rng,
-            animal_type=args.animal_type,
-            armor_state=args.armor_state,
-        )
-        sample_id = f"{args.sample_prefix}_{timestamp}_{index:04d}"
-        view_prompts = build_view_prompts(catalog, spec)
-        mesh_forward_axis = args.mesh_forward_axis or spec.get("mesh_forward_axis", "POS_Y")
-        state = {
-            "sample_id": sample_id,
-            "prompt": spec.get("animal_description", ""),
-            "animal_type": spec["animal_type"],
-            "morphology_type": spec["morphology_type"],
-            "armor_state": spec.get("armor_state", "unarmored"),
-            "mesh_forward_axis": mesh_forward_axis,
-            "label_profile": spec.get("label_profile", "AUTO"),
-            "reference_prompt_catalog": str(Path(args.catalog).expanduser().resolve()),
-            "reference_prompt_spec_id": spec.get("id", ""),
-            "reference_prompt_spec": spec,
-            "openai_reference_prompts": view_prompts,
-            "openai_reference_defaults": catalog.get("defaults", {}),
-            "batch_seed": seed,
-            "status": "initialized",
-            "created_at": int(time.time()),
-        }
-        save_state(args.work_root, sample_id, state)
-        created.append(sample_id)
-
+    created, seed = create_batch_states(
+        work_root=args.work_root,
+        count=args.count,
+        catalog_path=args.catalog,
+        sample_prefix=args.sample_prefix,
+        animal_type=args.animal_type,
+        armor_state=args.armor_state,
+        seed=args.seed,
+        mesh_forward_axis=args.mesh_forward_axis,
+    )
     print(json.dumps({"created": created, "seed": seed}, indent=2))
+
+
+def validate_face_limit_range(minimum: int, maximum: int) -> None:
+    if minimum <= 0 or maximum <= 0:
+        raise RuntimeError("--face-limit-min and --face-limit-max must be positive integers.")
+    if maximum < minimum:
+        raise RuntimeError("--face-limit-max must be greater than or equal to --face-limit-min.")
+
+
+def save_batch_run_summary(work_root: str | Path, summary: dict[str, Any]) -> Path:
+    run_id = summary["run_id"]
+    output = Path(work_root).expanduser().resolve() / "batch_runs" / f"{run_id}.json"
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+    return output
+
+
+def command_run_batch(args: argparse.Namespace) -> None:
+    validate_face_limit_range(args.face_limit_min, args.face_limit_max)
+    if args.prepare_label_work and (args.no_poll or args.no_download):
+        raise RuntimeError("--prepare-label-work requires polling and model download.")
+
+    created, seed = create_batch_states(
+        work_root=args.work_root,
+        count=args.count,
+        catalog_path=args.catalog,
+        sample_prefix=args.sample_prefix,
+        animal_type=args.animal_type,
+        armor_state=args.armor_state,
+        seed=args.seed,
+        mesh_forward_axis=args.mesh_forward_axis,
+    )
+    face_rng = random.Random(seed + 1009)
+    run_id = f"run_{int(time.time())}_{uuid.uuid4().hex[:8]}"
+    summary: dict[str, Any] = {
+        "run_id": run_id,
+        "dry_run": bool(args.dry_run),
+        "created": created,
+        "seed": seed,
+        "face_limit_range": [args.face_limit_min, args.face_limit_max],
+        "started_at": int(time.time()),
+        "samples": [],
+    }
+
+    for sample_id in created:
+        face_limit = face_rng.randint(args.face_limit_min, args.face_limit_max)
+        result: dict[str, Any] = {
+            "sample_id": sample_id,
+            "face_limit": face_limit,
+            "status": "planned" if args.dry_run else "running",
+        }
+        state = load_state(args.work_root, sample_id)
+        state["batch_runner"] = {
+            "run_id": run_id,
+            "face_limit": face_limit,
+            "face_limit_range": [args.face_limit_min, args.face_limit_max],
+            "dry_run": bool(args.dry_run),
+            "planned_at": int(time.time()),
+        }
+        state["status"] = "runner_planned" if args.dry_run else "runner_running"
+        save_state(args.work_root, sample_id, state)
+
+        if args.dry_run:
+            summary["samples"].append(result)
+            continue
+
+        try:
+            command_generate_reference(
+                argparse.Namespace(
+                    work_root=args.work_root,
+                    sample_id=sample_id,
+                    api_key=args.openai_api_key,
+                    base_url=args.openai_base_url,
+                    model=args.openai_model,
+                    size=args.image_size,
+                    quality=args.image_quality,
+                    background=args.background,
+                    output_format=args.output_format,
+                    views=args.reference_views,
+                    overwrite=args.overwrite_reference,
+                )
+            )
+            command_submit_tripo(
+                argparse.Namespace(
+                    work_root=args.work_root,
+                    sample_id=sample_id,
+                    api_key=args.tripo_api_key,
+                    base_url=args.tripo_base_url,
+                    multiview_task_id="",
+                    view_image_dir="",
+                    model_version=args.model_version,
+                    texture=args.texture,
+                    pbr=args.pbr,
+                    quad=args.quad,
+                    geometry_quality=args.geometry_quality,
+                    face_limit=face_limit,
+                    texture_alignment=args.texture_alignment,
+                )
+            )
+            result["status"] = "submitted"
+
+            if not args.no_poll:
+                command_poll_tripo(
+                    argparse.Namespace(
+                        work_root=args.work_root,
+                        sample_id=sample_id,
+                        api_key=args.tripo_api_key,
+                        base_url=args.tripo_base_url,
+                        interval=args.poll_interval,
+                        timeout=args.poll_timeout,
+                        no_download=args.no_download,
+                    )
+                )
+                result["status"] = "model_polled" if args.no_download else "model_downloaded"
+
+            if args.prepare_label_work:
+                latest_state = load_state(args.work_root, sample_id)
+                profile = args.profile or latest_state.get("label_profile", "AUTO")
+                command_prepare_label_work(
+                    argparse.Namespace(
+                        work_root=args.work_root,
+                        sample_id=sample_id,
+                        blender=args.blender,
+                        model_file="",
+                        profile=profile,
+                        mesh_forward_axis="",
+                        resolution=args.resolution,
+                        no_join_meshes=args.no_join_meshes,
+                    )
+                )
+                result["status"] = "label_work_prepared"
+
+            latest_state = load_state(args.work_root, sample_id)
+            latest_state["batch_runner"]["completed_at"] = int(time.time())
+            latest_state["batch_runner"]["result_status"] = result["status"]
+            save_state(args.work_root, sample_id, latest_state)
+        except Exception as error:
+            result["status"] = "failed"
+            result["error"] = str(error)
+            try:
+                failed_state = load_state(args.work_root, sample_id)
+                failed_state["status"] = "runner_failed"
+                failed_state["batch_runner"] = failed_state.get("batch_runner", {})
+                failed_state["batch_runner"]["failed_at"] = int(time.time())
+                failed_state["batch_runner"]["error"] = str(error)
+                save_state(args.work_root, sample_id, failed_state)
+            except Exception:
+                pass
+            summary["samples"].append(result)
+            summary["finished_at"] = int(time.time())
+            save_batch_run_summary(args.work_root, summary)
+            if not args.continue_on_error:
+                raise
+            print(f"Sample {sample_id} failed: {error}", file=sys.stderr)
+            continue
+
+        summary["samples"].append(result)
+        save_batch_run_summary(args.work_root, summary)
+
+    summary["finished_at"] = int(time.time())
+    summary_path = save_batch_run_summary(args.work_root, summary)
+    summary["summary_path"] = str(summary_path)
+    summary_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+    print(json.dumps(summary, indent=2))
 
 
 def command_generate_reference(args: argparse.Namespace) -> None:
@@ -1032,6 +1261,7 @@ def main() -> None:
     handlers = {
         "init-sample": command_init_sample,
         "init-batch": command_init_batch,
+        "run-batch": command_run_batch,
         "generate-reference": command_generate_reference,
         "reference-placeholder": command_reference_placeholder,
         "submit-tripo": command_submit_tripo,
