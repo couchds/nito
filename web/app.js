@@ -431,14 +431,15 @@ function sampleActionPanel(sample) {
       <div class="pipeline-dag" aria-label="Sample pipeline">
         ${pipeline.map((step, index) => pipelineStep(step, index)).join("")}
       </div>
-      <div class="next-step-row">
+      <div class="next-step-row ${activeJob ? "is-running" : ""}">
         <button
-          class="primary-inline-action"
+          class="primary-inline-action ${activeJob ? "is-loading" : ""}"
           type="button"
           data-sample-id="${escapeHtml(sample.sample_id)}"
           data-sample-action="${escapeHtml(nextAction.action || "")}"
           ${nextAction.action ? "" : "disabled"}
         >
+          ${activeJob ? '<span class="button-loader" aria-hidden="true"></span>' : ""}
           ${escapeHtml(nextAction.label)}
         </button>
         <span>${escapeHtml(nextAction.detail)}</span>
@@ -524,7 +525,7 @@ function pipelineStep(step, index) {
     <div class="pipeline-step-wrap">
       ${index ? '<span class="pipeline-edge"></span>' : ""}
       <article class="pipeline-step step-${escapeHtml(step.state)}">
-        <span class="step-state-dot" aria-hidden="true"></span>
+        ${step.state === "running" ? '<span class="arcane-loader" aria-hidden="true"></span>' : '<span class="step-state-dot" aria-hidden="true"></span>'}
         <div>
           <strong>${escapeHtml(step.title)}</strong>
           <span>${escapeHtml(step.detail)}</span>
