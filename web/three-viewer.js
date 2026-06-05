@@ -24,7 +24,7 @@ class NitoThreeViewport {
     this.wireframe = false;
 
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x143c35);
+    this.scene.background = new THREE.Color(0x090c0c);
 
     this.camera = new THREE.PerspectiveCamera(45, 1, 0.01, 1000);
     this.renderer = new THREE.WebGLRenderer({
@@ -36,7 +36,7 @@ class NitoThreeViewport {
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.05;
-    this.renderer.setClearColor(0x111d1a, 1);
+    this.renderer.setClearColor(0x090c0c, 1);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     this.renderer.setSize(1, 1, false);
     this.renderer.domElement.className = "three-canvas";
@@ -50,7 +50,7 @@ class NitoThreeViewport {
     this.controls.maxDistance = 80;
     this.controls.autoRotateSpeed = 1.1;
 
-    this.grid = new THREE.GridHelper(8, 16, 0x2d7d75, 0xc5d8d2);
+    this.grid = new THREE.GridHelper(8, 16, 0xb78a45, 0xd8c6a3);
     this.grid.material.transparent = true;
     this.grid.material.opacity = 0.55;
     this.scene.add(this.grid);
@@ -70,13 +70,13 @@ class NitoThreeViewport {
   }
 
   addLights() {
-    this.scene.add(new THREE.HemisphereLight(0xffffff, 0xaab9b4, 2.2));
+    this.scene.add(new THREE.HemisphereLight(0xfff4de, 0x9b7a48, 2.2));
 
     const key = new THREE.DirectionalLight(0xffffff, 2.7);
     key.position.set(4, 7, 6);
     this.scene.add(key);
 
-    const rim = new THREE.DirectionalLight(0xb9fff3, 1.1);
+    const rim = new THREE.DirectionalLight(0xffd28a, 1.1);
     rim.position.set(-5, 3, -4);
     this.scene.add(rim);
   }
