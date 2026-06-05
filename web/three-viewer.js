@@ -193,7 +193,9 @@ class NitoThreeViewport {
         child.frustumCulled = false;
         child.receiveShadow = true;
         child.renderOrder = 2;
-        child.material = this.createVisibleMaterial(child.material);
+        child.material = Array.isArray(child.material)
+          ? child.material.map((material) => this.createVisibleMaterial(material))
+          : this.createVisibleMaterial(child.material);
         const materials = Array.isArray(child.material) ? child.material : [child.material];
         materials.filter(Boolean).forEach((material) => {
           this.modelMaterials.push(material);
@@ -217,8 +219,14 @@ class NitoThreeViewport {
 
   createVisibleMaterial(originalMaterial) {
     const source = Array.isArray(originalMaterial) ? originalMaterial[0] : originalMaterial;
+    const map = source?.map || null;
+    if (map) {
+      map.colorSpace = THREE.SRGBColorSpace;
+      map.needsUpdate = true;
+    }
     const material = new THREE.MeshBasicMaterial({
-      color: new THREE.Color(0xdce8e3),
+      color: new THREE.Color(map ? 0xffffff : 0xdce8e3),
+      map,
       side: THREE.DoubleSide,
       transparent: false,
       opacity: 1,
