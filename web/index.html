@@ -60,7 +60,7 @@
           <section class="content-band">
             <div class="section-heading">
               <h2>Batches</h2>
-              <button type="button" data-view="create">Create Batch</button>
+              <button type="button" data-view="create">Create Sample</button>
             </div>
             <div id="batchList" class="batch-list"></div>
           </section>
@@ -94,97 +94,44 @@
 
         <section id="createView" class="view">
           <div class="section-heading">
-            <h2>Create</h2>
+            <h2>Create Sample</h2>
           </div>
-          <div class="create-grid">
-            <form id="sampleForm" class="content-band">
-              <section class="panel-section">
-                <h2>Create Sample</h2>
+          <form id="sampleForm" class="content-band create-wizard">
+            <div class="wizard-rail" aria-label="Create sample steps">
+              <span class="wizard-pill is-active" data-step-pill="prompt">Prompt</span>
+              <span class="wizard-pill" data-step-pill="skeleton">Skeleton</span>
+            </div>
+
+            <section id="promptStep" class="wizard-step is-active">
+              <div class="prompt-stage">
+                <span class="step-kicker">Step 1</span>
+                <h2>Describe the character</h2>
                 <label>
                   Prompt
-                  <textarea id="promptInput" name="prompt" rows="5" placeholder="armored river otter with clean quadruped proportions"></textarea>
+                  <textarea id="promptInput" name="prompt" rows="8" required placeholder="armored river otter with clean quadruped proportions"></textarea>
                 </label>
-                <div class="field-grid">
-                  <label>
-                    Prefix
-                    <input id="samplePrefixInput" name="samplePrefix" type="text" value="sample">
-                  </label>
-                  <label>
-                    Body plan
-                    <select id="sampleMorphologySelect" name="morphologyType" required>
-                      <option value="">Select body plan</option>
-                    </select>
-                    <span id="bodyPlanExamples" class="field-help">Examples: medium quadruped (dog, cat), hind-leg dominant (frog, rabbit).</span>
-                  </label>
-                  <label>
-                    Armor
-                    <select id="sampleArmorSelect" name="armorState">
-                      <option value="">Unspecified</option>
-                      <option value="armored">Armored</option>
-                      <option value="unarmored">Unarmored</option>
-                    </select>
-                  </label>
+                <div class="wizard-actions">
+                  <button id="promptNextButton" class="primary-action" type="button">Next</button>
                 </div>
-                <fieldset class="tag-fieldset">
-                  <legend>Variant tags</legend>
-                  <div id="variantTagList" class="checkbox-grid"></div>
-                </fieldset>
-                <div id="bodyPlanSkeletonPreview" class="skeleton-schema-slot"></div>
-                <button id="createSampleButton" class="primary-action" type="submit">Create Sample</button>
-              </section>
-            </form>
+              </div>
+            </section>
 
-            <form id="runForm" class="content-band">
-              <section class="panel-section">
-                <h2>Create Random Catalog Batch</h2>
-                <div class="field-grid">
-                  <label>
-                    Count
-                    <input id="countInput" name="count" type="number" min="1" max="100" value="4">
-                  </label>
-                  <label>
-                    Prefix
-                    <input id="prefixInput" name="samplePrefix" type="text" value="ui">
-                  </label>
-                  <label>
-                    Seed
-                    <input id="seedInput" name="seed" type="number" min="0" value="0">
-                  </label>
+            <section id="skeletonStep" class="wizard-step">
+              <input id="sampleMorphologySelect" name="morphologyType" type="hidden" required>
+              <div class="skeleton-choice-header">
+                <div>
+                  <span class="step-kicker">Step 2</span>
+                  <h2>Choose the skeleton type</h2>
                 </div>
-              </section>
-
-              <section class="panel-section">
-                <h2>Tripo Target</h2>
-                <div class="number-row">
-                  <label>
-                    Min faces
-                    <input id="faceMinInput" name="faceLimitMin" type="number" min="1" value="3000">
-                  </label>
-                  <label>
-                    Max faces
-                    <input id="faceMaxInput" name="faceLimitMax" type="number" min="1" value="8000">
-                  </label>
-                </div>
-              </section>
-
-              <section class="panel-section switches">
-                <label class="switch-row">
-                  <input id="dryRunInput" name="dryRun" type="checkbox" checked>
-                  <span>Dry run</span>
-                </label>
-                <label class="switch-row">
-                  <input id="prepareInput" name="prepareLabelWork" type="checkbox">
-                  <span>Prepare Blender labels</span>
-                </label>
-                <label class="switch-row">
-                  <input id="continueInput" name="continueOnError" type="checkbox" checked>
-                  <span>Continue on error</span>
-                </label>
-              </section>
-
-              <button id="runButton" class="primary-action" type="submit">Run Batch</button>
-            </form>
-          </div>
+              </div>
+              <div id="skeletonTypeGrid" class="skeleton-type-grid"></div>
+              <div class="wizard-actions split-actions">
+                <button id="schemaBackButton" type="button">Back</button>
+                <button id="createSampleButton" class="primary-action" type="submit" disabled>Create Sample</button>
+              </div>
+              <div id="bodyPlanSkeletonPreview" class="skeleton-schema-slot"></div>
+            </section>
+          </form>
         </section>
 
         <section id="jobsView" class="view">

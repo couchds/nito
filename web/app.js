@@ -7,6 +7,7 @@ const state = {
   selectedBatchId: "",
   selectedSampleId: "",
   selectedJobId: "",
+  initialViewApplied: false,
 };
 
 const legacyBodyPlanAliases = {
@@ -18,6 +19,41 @@ const legacyBodyPlanAliases = {
   reptile_shell: "shell_reptile",
 };
 
+const skeletonTypeOptions = [
+  {
+    bodyPlan: "medium_quadruped",
+    schemaId: "mammal_quadruped_v1",
+    icon: "mammal",
+    title: "Mammal quadruped",
+    examples: ["dog", "cat", "river otter"],
+    detail: "Balanced spine and four walking limbs for most soft-bodied mammals.",
+  },
+  {
+    bodyPlan: "long_legged_ungulate",
+    schemaId: "ungulate_quadruped_v1",
+    icon: "ungulate",
+    title: "Hoofed runner",
+    examples: ["horse", "deer", "ram"],
+    detail: "Longer neck, taller limb columns, and hoof-oriented lower chains.",
+  },
+  {
+    bodyPlan: "low_reptile",
+    schemaId: "sprawling_quadruped_v1",
+    icon: "sprawling",
+    title: "Sprawling body",
+    examples: ["lizard", "crocodile", "turtle"],
+    detail: "Low torso with limbs that angle outward before contacting the ground.",
+  },
+  {
+    bodyPlan: "hind_leg_dominant",
+    schemaId: "hopper_quadruped_v1",
+    icon: "hopper",
+    title: "Hopper / croucher",
+    examples: ["frog", "rabbit", "kangaroo-like creature"],
+    detail: "Compact front limbs with oversized rear limbs for crouched poses.",
+  },
+];
+
 const elements = {
   statusLine: document.querySelector("#statusLine"),
   refreshButton: document.querySelector("#refreshButton"),
@@ -25,10 +61,14 @@ const elements = {
   createSampleButton: document.querySelector("#createSampleButton"),
   runForm: document.querySelector("#runForm"),
   runButton: document.querySelector("#runButton"),
+  promptInput: document.querySelector("#promptInput"),
+  promptNextButton: document.querySelector("#promptNextButton"),
+  schemaBackButton: document.querySelector("#schemaBackButton"),
+  promptStep: document.querySelector("#promptStep"),
+  skeletonStep: document.querySelector("#skeletonStep"),
+  skeletonTypeGrid: document.querySelector("#skeletonTypeGrid"),
   sampleMorphologySelect: document.querySelector("#sampleMorphologySelect"),
-  bodyPlanExamples: document.querySelector("#bodyPlanExamples"),
   bodyPlanSkeletonPreview: document.querySelector("#bodyPlanSkeletonPreview"),
-  variantTagList: document.querySelector("#variantTagList"),
   batchCount: document.querySelector("#batchCount"),
   sampleCount: document.querySelector("#sampleCount"),
   jobCount: document.querySelector("#jobCount"),
@@ -189,10 +229,99 @@ function skeletonSchemaCard(schema, options = {}) {
   `;
 }
 
+function skeletonTypeIcon(kind) {
+  const icons = {
+    mammal: `
+      <svg viewBox="0 0 64 64" aria-hidden="true">
+        <path d="M12 42c4-12 14-19 28-19 8 0 14 3 18 8" />
+        <path d="M42 23l7-8 4 11" />
+        <path d="M26 43v10M45 39v14M17 45v8M55 36v9" />
+        <path d="M9 43c6 2 11 2 17 0" />
+      </svg>
+    `,
+    ungulate: `
+      <svg viewBox="0 0 64 64" aria-hidden="true">
+        <path d="M14 37c6-13 19-18 35-14 4 1 7 4 9 8" />
+        <path d="M46 23l7-9 2 12" />
+        <path d="M22 39v16M38 36v19M50 35v20M17 41l-2 14" />
+        <path d="M20 55h-7M41 55h-7M53 55h-7" />
+      </svg>
+    `,
+    sprawling: `
+      <svg viewBox="0 0 64 64" aria-hidden="true">
+        <path d="M10 38c9-10 25-13 41-8 4 1 7 3 9 6" />
+        <path d="M51 29l8-5-2 9" />
+        <path d="M21 39l-9 9M31 36l-5 12M43 35l7 11M52 37l9 6" />
+        <path d="M7 48h9M23 48h7M48 46h8M58 43h5" />
+      </svg>
+    `,
+    hopper: `
+      <svg viewBox="0 0 64 64" aria-hidden="true">
+        <path d="M17 38c4-10 12-15 24-15 8 0 13 4 15 10" />
+        <path d="M43 24l6-7 4 10" />
+        <path d="M27 42l-12 12h15M42 39l10 15H37" />
+        <path d="M20 41l-8 3M53 35l7 4" />
+      </svg>
+    `,
+  };
+  return icons[kind] || icons.mammal;
+}
+
+function renderSkeletonTypeChoices() {
+  const selected = elements.sampleMorphologySelect.value;
+  elements.skeletonTypeGrid.innerHTML = skeletonTypeOptions
+    .map((option) => {
+      const schema = skeletonSchemaForId(option.schemaId);
+      return `
+        <button
+          class="skeleton-type-card ${selected === option.bodyPlan ? "is-selected" : ""}"
+          type="button"
+          data-body-plan="${escapeHtml(option.bodyPlan)}"
+        >
+          <span class="skeleton-type-icon">${skeletonTypeIcon(option.icon)}</span>
+          <span class="skeleton-type-copy">
+            <strong>${escapeHtml(schema?.label || option.title)}</strong>
+            <span>${escapeHtml(option.detail)}</span>
+            <small>Examples: ${escapeHtml(option.examples.join(", "))}</small>
+          </span>
+        </button>
+      `;
+    })
+    .join("");
+  elements.createSampleButton.disabled = !selected;
+}
+
 function renderSkeletonSchemaPreview() {
   const bodyPlan = elements.sampleMorphologySelect.value;
   const schema = skeletonSchemaForId(skeletonSchemaIdForBodyPlan(bodyPlan));
   elements.bodyPlanSkeletonPreview.innerHTML = skeletonSchemaCard(schema, { compact: true });
+}
+
+function setCreateWizardStep(step) {
+  const isPrompt = step === "prompt";
+  elements.promptStep.classList.toggle("is-active", isPrompt);
+  elements.skeletonStep.classList.toggle("is-active", !isPrompt);
+  document.querySelectorAll("[data-step-pill]").forEach((pill) => {
+    pill.classList.toggle("is-active", pill.dataset.stepPill === step);
+  });
+}
+
+function chooseSkeletonType(bodyPlan) {
+  if (!skeletonTypeOptions.some((option) => option.bodyPlan === bodyPlan)) return;
+  elements.sampleMorphologySelect.value = bodyPlan;
+  renderSkeletonTypeChoices();
+  renderSkeletonSchemaPreview();
+}
+
+function continueFromPrompt() {
+  const prompt = elements.promptInput.value.trim();
+  if (!prompt) {
+    elements.promptInput.setCustomValidity("Describe the character before choosing a skeleton.");
+    elements.promptInput.reportValidity();
+    return;
+  }
+  elements.promptInput.setCustomValidity("");
+  setCreateWizardStep("skeleton");
 }
 
 function sampleById(sampleId) {
@@ -266,7 +395,7 @@ function chooseSelections() {
 
 function render() {
   chooseSelections();
-  renderLabelSelects();
+  renderCreateWizard();
   elements.batchCount.textContent = state.batches.length;
   elements.sampleCount.textContent = state.samples.length;
   elements.jobCount.textContent = state.jobs.length;
@@ -281,26 +410,30 @@ function render() {
   renderSampleDetail();
   renderJobs();
   renderSettings();
+  applyInitialView();
 }
 
-function catalogValues(fieldName) {
-  return [...new Set((state.catalog.specs || []).map((spec) => spec[fieldName]).filter(Boolean))].sort();
-}
-
-function renderSelectOptions(select, values, fallbackValue, fallbackLabel) {
-  const current = select.value || fallbackValue;
-  const options = [`<option value="${escapeHtml(fallbackValue)}">${escapeHtml(fallbackLabel)}</option>`];
-  for (const value of values) {
-    options.push(`<option value="${escapeHtml(value)}">${escapeHtml(labelText(value))}</option>`);
+function applyInitialView() {
+  if (state.initialViewApplied) return;
+  state.initialViewApplied = true;
+  const params = new URLSearchParams(window.location.search);
+  const requestedView = params.get("view");
+  const allowedViews = new Set(["batches", "samples", "create", "jobs", "settings"]);
+  if (allowedViews.has(requestedView)) {
+    switchView(requestedView);
   }
-  select.innerHTML = options.join("");
-  select.value = [...select.options].some((option) => option.value === current) ? current : fallbackValue;
+  const requestedBodyPlan = params.get("bodyPlan");
+  if (requestedBodyPlan) {
+    chooseSkeletonType(requestedBodyPlan);
+  }
+  if (requestedView === "create" && params.get("step") === "skeleton") {
+    setCreateWizardStep("skeleton");
+  }
 }
 
-function renderLabelSelects() {
-  renderSelectOptions(elements.sampleMorphologySelect, state.catalog.body_plans || catalogValues("morphology_type"), "", "Select body plan");
-  renderBodyPlanExamples();
-  renderVariantTags();
+function renderCreateWizard() {
+  renderSkeletonTypeChoices();
+  renderSkeletonSchemaPreview();
 }
 
 function renderSettings() {
@@ -310,40 +443,6 @@ function renderSettings() {
   elements.settingsBlenderStatus.textContent = state.settings.blender_exists
     ? "Blender path is ready for prep and opening label files."
     : "Set this to blender.exe before opening label files from Nito.";
-}
-
-function renderBodyPlanExamples() {
-  const selected = elements.sampleMorphologySelect.value;
-  const examples = state.catalog.label_schema?.body_plan_examples || {};
-  const selectedExamples = examples[selected];
-  if (Array.isArray(selectedExamples) && selectedExamples.length) {
-    elements.bodyPlanExamples.textContent = `Examples: ${selectedExamples.slice(0, 2).join(", ")}.`;
-    renderSkeletonSchemaPreview();
-    return;
-  }
-  elements.bodyPlanExamples.textContent = "Examples: medium quadruped (dog, cat), hind-leg dominant (frog, rabbit).";
-  renderSkeletonSchemaPreview();
-}
-
-function renderVariantTags() {
-  const current = new Set(
-    [...elements.variantTagList.querySelectorAll("input[name='variantTags']:checked")].map((input) => input.value),
-  );
-  const tags = state.catalog.variant_tags || [];
-  if (!tags.length) {
-    elements.variantTagList.innerHTML = '<p class="empty compact-empty">No variant tags configured.</p>';
-    return;
-  }
-  elements.variantTagList.innerHTML = tags
-    .map(
-      (value) => `
-        <label class="check-chip">
-          <input name="variantTags" type="checkbox" value="${escapeHtml(value)}" ${current.has(value) ? "checked" : ""}>
-          <span>${escapeHtml(labelText(value))}</span>
-        </label>
-      `,
-    )
-    .join("");
 }
 
 function batchStatus(batch) {
@@ -356,8 +455,8 @@ function renderBatches() {
   if (!state.batches.length) {
     elements.batchList.innerHTML = emptyState(
       "No batches yet",
-      "Create a catalog batch when you want a reusable training set.",
-      "Create Batch",
+      "Create prompt-backed samples first, then group them into reusable training sets.",
+      "Create Sample",
       "create",
     );
     return;
@@ -961,15 +1060,38 @@ function renderJobs() {
     .join("");
 }
 
+function inferredArmorState(prompt) {
+  const text = String(prompt || "").toLowerCase();
+  if (/\bunarmou?red\b|\bwithout armor\b|\bno armor\b/.test(text)) return "unarmored";
+  if (/\barmou?red\b|\barmor\b/.test(text)) return "armored";
+  return "";
+}
+
+function inferredVariantTags(prompt) {
+  const text = String(prompt || "").toLowerCase();
+  const tags = state.catalog.variant_tags || [];
+  return tags.filter((tagName) => {
+    const phrase = String(tagName || "").toLowerCase().replaceAll("_", " ");
+    return phrase && new RegExp(`\\b${phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(text);
+  });
+}
+
+function inferredAnimalType(prompt) {
+  const text = String(prompt || "").toLowerCase();
+  const animals = state.catalog.animals || [];
+  return animals.find((animal) => new RegExp(`\\b${String(animal).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(text)) || "unknown";
+}
+
 function samplePayload() {
   const formData = new FormData(elements.sampleForm);
+  const prompt = formData.get("prompt") || "";
   return {
-    prompt: formData.get("prompt") || "",
-    samplePrefix: formData.get("samplePrefix") || "sample",
-    animalType: "unknown",
+    prompt,
+    samplePrefix: "nito",
+    animalType: inferredAnimalType(prompt),
     morphologyType: formData.get("morphologyType") || "",
-    armorState: formData.get("armorState") || "",
-    variantTags: formData.getAll("variantTags"),
+    armorState: inferredArmorState(prompt),
+    variantTags: inferredVariantTags(prompt),
   };
 }
 
@@ -991,6 +1113,11 @@ function batchPayload() {
 
 async function createSample(event) {
   event.preventDefault();
+  if (!elements.sampleMorphologySelect.value) {
+    elements.statusLine.textContent = "Choose a skeleton type before creating the sample.";
+    setCreateWizardStep("skeleton");
+    return;
+  }
   elements.createSampleButton.disabled = true;
   elements.statusLine.textContent = "Creating sample";
   try {
@@ -1003,6 +1130,10 @@ async function createSample(event) {
     await loadState();
     renderSampleDetail();
     switchView("sampleDetail");
+    elements.sampleForm.reset();
+    elements.sampleMorphologySelect.value = "";
+    setCreateWizardStep("prompt");
+    renderCreateWizard();
   } catch (error) {
     elements.statusLine.textContent = error.message;
   } finally {
@@ -1120,9 +1251,17 @@ document.addEventListener("click", (event) => {
 });
 
 elements.refreshButton.addEventListener("click", loadState);
-elements.sampleMorphologySelect.addEventListener("change", renderBodyPlanExamples);
+elements.promptNextButton.addEventListener("click", continueFromPrompt);
+elements.schemaBackButton.addEventListener("click", () => setCreateWizardStep("prompt"));
+elements.skeletonTypeGrid.addEventListener("click", (event) => {
+  const card = event.target.closest("button[data-body-plan]");
+  if (!card) return;
+  chooseSkeletonType(card.dataset.bodyPlan);
+});
 elements.sampleForm.addEventListener("submit", createSample);
-elements.runForm.addEventListener("submit", startBatch);
+if (elements.runForm) {
+  elements.runForm.addEventListener("submit", startBatch);
+}
 elements.settingsForm.addEventListener("submit", saveSettings);
 window.addEventListener("nito-three-ready", () => hydrateModelViewers(elements.sampleDetail));
 elements.batchList.addEventListener("click", (event) => {
