@@ -215,10 +215,10 @@ The older Tripo-generated multiview path is still available for experiments. `ge
 If image download fails after task completion, rerun `poll-multiview --sample-id <id>` to query the existing task and retry the local downloads without submitting another generation.
 Pass `--multiview-task-id` to `submit-tripo` to use a previously generated Tripo multiview task instead of OpenAI view images.
 
-If the generated model imports with a different head-to-tail axis than the reference image implied, rerun only the Blender label/review stage with an override:
+Blender label-work files are normalized to a canonical frame before guide fitting: +Z is up, +Y points from tail toward head, the mesh is centered on the origin, and the lowest point rests on Z=0. If the generated model imports with a different head-to-tail axis than the reference image implied, rerun only the Blender label/review stage with `--mesh-forward-axis` set to the imported model's current tail-to-head axis:
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\automated_training_workflow.py prepare-label-work --sample-id auto_horse_000 --profile HORSE --mesh-forward-axis POS_Y
+.\.venv\Scripts\python.exe scripts\automated_training_workflow.py prepare-label-work --sample-id auto_horse_000 --profile HORSE --mesh-forward-axis POS_X
 ```
 
 After the review images pass the gold-label skill checklist, export the corrected guide:

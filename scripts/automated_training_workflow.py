@@ -30,6 +30,7 @@ DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_OPENAI_IMAGE_MODEL = "gpt-image-2"
 DEFAULT_TRIPO_BASE_URL = "https://api.tripo3d.ai/v2/openapi"
 DEFAULT_BLENDER = r"C:\Program Files (x86)\Steam\steamapps\common\Blender\blender.exe"
+DEFAULT_TRIPO_MESH_FORWARD_AXIS = "POS_X"
 MODEL_EXTENSIONS = (".glb", ".gltf", ".obj", ".fbx", ".zip")
 REFERENCE_VIEWS = ("front", "left", "right", "back")
 TRIPO_VIEW_ORDER = ("front", "left", "back", "right")
@@ -45,7 +46,11 @@ def parse_args() -> argparse.Namespace:
     init.add_argument("--prompt", required=True)
     init.add_argument("--animal-type", required=True)
     init.add_argument("--morphology-type", required=True)
-    init.add_argument("--mesh-forward-axis", default="POS_Y", choices=("POS_X", "NEG_X", "POS_Y", "NEG_Y"))
+    init.add_argument(
+        "--mesh-forward-axis",
+        default=DEFAULT_TRIPO_MESH_FORWARD_AXIS,
+        choices=("POS_X", "NEG_X", "POS_Y", "NEG_Y"),
+    )
 
     init_batch = subparsers.add_parser("init-batch", help="Create N sample states from the prompt catalog.")
     init_batch.add_argument("--count", type=int, required=True)
@@ -647,6 +652,11 @@ def require_model_file(state: dict[str, Any], override: str = "") -> Path:
     return model_file
 
 
+def require_created_file(path: Path, label: str) -> None:
+    if not path.exists():
+        raise RuntimeError(f"{label} was not created: {path}")
+
+
 def create_batch_states(
     *,
     work_root: str | Path,
@@ -675,7 +685,9 @@ def create_batch_states(
         )
         sample_id = f"{sample_prefix}_{timestamp}_{index:04d}"
         view_prompts = build_view_prompts(catalog, spec)
-        resolved_mesh_forward_axis = mesh_forward_axis or spec.get("mesh_forward_axis", "POS_Y")
+        resolved_mesh_forward_axis = mesh_forward_axis or spec.get(
+            "mesh_forward_axis", DEFAULT_TRIPO_MESH_FORWARD_AXIS
+        )
         state = {
             "sample_id": sample_id,
             "prompt": spec.get("animal_description", ""),
@@ -1139,7 +1151,8 @@ def command_prepare_label_work(args: argparse.Namespace) -> None:
     source_blend = directory / f"{args.sample_id}_imported.blend"
     label_blend = directory / f"{args.sample_id}_label_work.blend"
     review_dir = directory / "review_candidate"
-    axis = args.mesh_forward_axis or state.get("mesh_forward_axis", "POS_Y")
+    source_axis = args.mesh_forward_axis or state.get("mesh_forward_axis", DEFAULT_TRIPO_MESH_FORWARD_AXIS)
+    canonical_axis = "POS_Y"
 
     run(
         [
@@ -1153,9 +1166,14 @@ def command_prepare_label_work(args: argparse.Namespace) -> None:
             str(source_blend),
             "--mesh-name",
             mesh_name,
+            "--source-forward-axis",
+            source_axis,
+            "--target-forward-axis",
+            canonical_axis,
             *(["--no-join-meshes"] if args.no_join_meshes else []),
         ]
     )
+    require_created_file(source_blend, "Imported Blender file")
     run(
         [
             blender,
@@ -1172,9 +1190,10 @@ def command_prepare_label_work(args: argparse.Namespace) -> None:
             "--profile",
             args.profile,
             "--mesh-forward-axis",
-            axis,
+            canonical_axis,
         ]
     )
+    require_created_file(label_blend, "Label-work Blender file")
     guide_name = f"{mesh_name}_QWalk_Geometric_Guides"
     run(
         [
@@ -1193,7 +1212,7 @@ def command_prepare_label_work(args: argparse.Namespace) -> None:
             "--resolution",
             str(args.resolution),
             "--mesh-forward-axis",
-            axis,
+            canonical_axis,
         ]
     )
     manifest_path = review_dir / "review_manifest.json"
@@ -1208,10 +1227,13 @@ def command_prepare_label_work(args: argparse.Namespace) -> None:
             "label_work_blend": str(label_blend),
             "label_mesh": mesh_name,
             "label_guide": guide_name,
-            "mesh_forward_axis": axis,
+            "source_mesh_forward_axis": source_axis,
+            "mesh_forward_axis": canonical_axis,
+            "mesh_orientation_standardized": True,
             "label_profile": args.profile,
             "review_dir": str(review_dir),
             "status": "candidate_review_rendered",
+            "updated_at": int(time.time()),
         }
     )
     save_state(args.work_root, args.sample_id, state)

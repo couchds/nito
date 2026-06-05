@@ -1,5 +1,6 @@
 const state = {
   catalog: { animals: [], specs: [] },
+  settings: { blender_path: "", blender_exists: false },
   samples: [],
   batches: [],
   jobs: [],
@@ -27,6 +28,10 @@ const elements = {
   sampleDetail: document.querySelector("#sampleDetail"),
   jobList: document.querySelector("#jobList"),
   jobLog: document.querySelector("#jobLog"),
+  settingsForm: document.querySelector("#settingsForm"),
+  blenderPathInput: document.querySelector("#blenderPathInput"),
+  settingsBlenderStatus: document.querySelector("#settingsBlenderStatus"),
+  saveSettingsButton: document.querySelector("#saveSettingsButton"),
 };
 
 function formatTime(value) {
@@ -117,8 +122,21 @@ function sampleJobs(sample) {
   return state.jobs.filter((job) => job.payload?.sampleId === sample.sample_id);
 }
 
+function sampleJobAction(job) {
+  return job?.payload?.action || job?.action || "";
+}
+
+function jobSupersededByArtifacts(sample, job) {
+  if (!job || job.status === "running") return false;
+  const action = sampleJobAction(job);
+  if (action === "prepare-label-work" && sample.label_work_blend) return true;
+  if (action === "poll-tripo" && sample.model?.url) return true;
+  if (action === "generate-reference" && hasReferenceSet(sample)) return true;
+  return false;
+}
+
 function latestSampleJob(sample) {
-  return sampleJobs(sample)[0] || null;
+  return sampleJobs(sample).find((job) => !jobSupersededByArtifacts(sample, job)) || null;
 }
 
 async function fetchJson(url, options) {
@@ -136,6 +154,7 @@ async function loadState() {
   state.samples = data.samples || [];
   state.batches = data.batches || data.batch_runs || [];
   state.jobs = data.jobs || [];
+  state.settings = data.settings || { blender_path: "", blender_exists: false };
   render();
 }
 
@@ -164,6 +183,7 @@ function render() {
   renderSamples();
   renderSampleDetail();
   renderJobs();
+  renderSettings();
 }
 
 function catalogValues(fieldName) {
@@ -184,6 +204,15 @@ function renderLabelSelects() {
   renderSelectOptions(elements.sampleMorphologySelect, state.catalog.body_plans || catalogValues("morphology_type"), "", "Select body plan");
   renderBodyPlanExamples();
   renderVariantTags();
+}
+
+function renderSettings() {
+  if (document.activeElement !== elements.blenderPathInput) {
+    elements.blenderPathInput.value = state.settings.blender_path || "";
+  }
+  elements.settingsBlenderStatus.textContent = state.settings.blender_exists
+    ? "Blender path is ready for prep and opening label files."
+    : "Set this to blender.exe before opening label files from Nito.";
 }
 
 function renderBodyPlanExamples() {
@@ -433,17 +462,32 @@ function modelPanel(sample) {
       }
       ${
         canEmbed
-          ? `<model-viewer
-              src="${safeDisplayUrl}"
-              ${previewUrl ? `poster="${safePreviewUrl}"` : ""}
-              ${fallbackUrl ? `data-fallback-src="${safeFallbackUrl}"` : ""}
-              camera-controls
-              auto-rotate
-              shadow-intensity="0.7"
-              exposure="0.9"
+          ? `<div
+              class="three-editor"
+              data-sample-id="${escapeHtml(sample.sample_id)}"
+              data-model-src="${safeDisplayUrl}"
+              data-fallback-src="${safeFallbackUrl}"
+              data-poster-src="${safePreviewUrl}"
             >
-              <a href="${safeDisplayUrl}" target="_blank" rel="noreferrer">Open model</a>
-            </model-viewer>`
+              <div class="three-toolbar" aria-label="3D model viewport controls">
+                <button type="button" data-three-action="zoom-in" title="Zoom in" aria-label="Zoom in">+</button>
+                <button type="button" data-three-action="zoom-out" title="Zoom out" aria-label="Zoom out">-</button>
+                <button type="button" data-three-action="reset" title="Reset view">Reset</button>
+                <button type="button" data-three-action="grid" title="Toggle grid">Grid</button>
+                <button type="button" data-three-action="wireframe" title="Toggle wireframe">Wire</button>
+                <button type="button" data-three-action="spin" title="Toggle auto rotate">Spin</button>
+              </div>
+              <div class="three-stage">
+                <div class="three-canvas-host"></div>
+                ${previewUrl ? `<img class="three-poster" src="${safePreviewUrl}" alt="${escapeHtml(sample.sample_id)} Tripo render">` : ""}
+                <div class="axis-gizmo" aria-hidden="true">
+                  <span class="axis-x">X</span>
+                  <span class="axis-y">Y</span>
+                  <span class="axis-z">Z</span>
+                </div>
+                <p class="viewer-status">Loading GLB viewport</p>
+              </div>
+            </div>`
           : previewUrl
             ? `<a class="model-render-preview" href="${safeRemoteUrl || safePreviewUrl}" target="_blank" rel="noreferrer">
                 <img src="${safePreviewUrl}" alt="${escapeHtml(sample.sample_id)} Tripo render">
@@ -476,18 +520,7 @@ function modelType(model, url) {
 }
 
 function hydrateModelViewers(container) {
-  container.querySelectorAll("model-viewer[data-fallback-src]").forEach((viewer) => {
-    viewer.addEventListener(
-      "error",
-      () => {
-        const fallbackSrc = viewer.dataset.fallbackSrc;
-        if (fallbackSrc && viewer.getAttribute("src") !== fallbackSrc) {
-          viewer.setAttribute("src", fallbackSrc);
-        }
-      },
-      { once: true },
-    );
-  });
+  window.NitoThreeViewer?.mountAll(container);
 }
 
 function promptPanel(sample) {
@@ -509,7 +542,7 @@ function sampleActionPanel(sample) {
   const jobs = sampleJobs(sample);
   const activeJob = jobs.find(isRunning);
   const latestJob = latestSampleJob(sample);
-  const stateJob = sample.ui_job?.job_id ? sample.ui_job : null;
+  const stateJob = sample.ui_job?.job_id && !jobSupersededByArtifacts(sample, sample.ui_job) ? sample.ui_job : null;
   const pipeline = pipelineState(sample, activeJob);
   const statusJob = activeJob || latestJob || stateJob;
   const nextAction = nextPipelineAction(sample, activeJob);
@@ -620,7 +653,7 @@ function pipelineState(sample, activeJob) {
     {
       key: "blender",
       title: "Blender file",
-      detail: hasBlenderFile ? "Review file ready" : "Prep for annotator",
+      detail: hasBlenderFile ? "Review file ready" : hasRemoteModel && !hasModel ? "Needs local GLB" : "Prep for annotator",
       state: stepState("blender", hasBlenderFile, hasModel),
     },
     {
@@ -674,7 +707,7 @@ function nextPipelineAction(sample, activeJob) {
     const hasRemoteModel = Boolean(sample.model?.remote_url);
     return {
       action: "poll-tripo",
-      label: "Check / Download Model",
+      label: hasRemoteModel ? "Download for Blender" : "Check / Download Model",
       detail: hasRemoteModel
         ? "Tripo generated the GLB; retry the local download for Blender."
         : "Polls the Tripo task and downloads the GLB when ready.",
@@ -688,19 +721,70 @@ function nextPipelineAction(sample, activeJob) {
     };
   }
   return {
-    action: "",
-    label: "Ready for Skeleton Placement",
-    detail: "Open the Blender file and place the skeleton manually.",
+    action: "open-blender",
+    label: "Open in Blender",
+    detail: "Launch the label-work file and place the skeleton manually.",
   };
+}
+
+function sampleDetailKey(sample) {
+  const jobs = sampleJobs(sample).map((job) => ({
+    job_id: job.job_id,
+    action: job.payload?.action || job.action || "",
+    status: job.status,
+    returncode: job.returncode,
+    finished_at: job.finished_at,
+  }));
+  const uiJob = sample.ui_job
+    ? {
+        job_id: sample.ui_job.job_id,
+        action: sample.ui_job.action,
+        status: sample.ui_job.status,
+        returncode: sample.ui_job.returncode,
+        finished_at: sample.ui_job.finished_at,
+      }
+    : null;
+  return JSON.stringify({
+    sample_id: sample.sample_id,
+    prompt: sample.prompt,
+    status: sample.status,
+    animal_type: sample.animal_type,
+    body_plan: sample.body_plan,
+    morphology_type: sample.morphology_type,
+    armor_state: sample.armor_state,
+    variant_tags: sample.variant_tags || [],
+    face_limit: sample.face_limit,
+    tripo_task_id: sample.tripo_task_id,
+    label_work_blend: sample.label_work_blend,
+    batches: sample.batches || [],
+    model: sample.model || {},
+    source_images: sample.source_images || {},
+    reference_images: sample.reference_images || {},
+    multiview_images: sample.multiview_images || {},
+    review_images: sample.review_images || {},
+    openai_reference_prompts: sample.openai_reference_prompts || {},
+    ui_job: uiJob,
+    jobs,
+  });
 }
 
 function renderSampleDetail() {
   const sample = sampleById(state.selectedSampleId) || state.samples[0];
   if (!sample) {
     elements.sampleDetail.innerHTML = '<p class="empty">Select a sample.</p>';
+    elements.sampleDetail.dataset.sampleId = "";
+    elements.sampleDetail.dataset.renderKey = "";
     return;
   }
   state.selectedSampleId = sample.sample_id;
+  const renderKey = sampleDetailKey(sample);
+  if (
+    elements.sampleDetail.dataset.sampleId === sample.sample_id &&
+    elements.sampleDetail.dataset.renderKey === renderKey
+  ) {
+    hydrateModelViewers(elements.sampleDetail);
+    return;
+  }
   const batches = sample.batches || [];
   elements.sampleDetail.innerHTML = `
     <div class="item-header">
@@ -725,6 +809,8 @@ function renderSampleDetail() {
     ${gallery("Blender Review Renders", sample.review_images, ["front", "left", "right", "rear", "top", "quarter"])}
     ${promptPanel(sample)}
   `;
+  elements.sampleDetail.dataset.sampleId = sample.sample_id;
+  elements.sampleDetail.dataset.renderKey = renderKey;
   hydrateModelViewers(elements.sampleDetail);
 }
 
@@ -850,6 +936,16 @@ async function startSampleAction(sampleId, action) {
   renderSampleDetail();
 }
 
+async function openBlenderSample(sampleId) {
+  elements.statusLine.textContent = "Opening Blender";
+  const result = await fetchJson(`/api/samples/${encodeURIComponent(sampleId)}/open-blender`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  elements.statusLine.textContent = `Opened ${result.blend_file}`;
+}
+
 async function resetStaleSample(sampleId) {
   elements.statusLine.textContent = "Resetting stale job state";
   await fetchJson(`/api/samples/${encodeURIComponent(sampleId)}/reset-stale`, {
@@ -860,6 +956,26 @@ async function resetStaleSample(sampleId) {
   state.selectedSampleId = sampleId;
   await loadState();
   renderSampleDetail();
+}
+
+async function saveSettings(event) {
+  event.preventDefault();
+  elements.saveSettingsButton.disabled = true;
+  elements.statusLine.textContent = "Saving settings";
+  try {
+    const settings = await fetchJson("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ blenderPath: elements.blenderPathInput.value }),
+    });
+    state.settings = settings;
+    renderSettings();
+    elements.statusLine.textContent = "Settings saved";
+  } catch (error) {
+    elements.statusLine.textContent = error.message;
+  } finally {
+    elements.saveSettingsButton.disabled = false;
+  }
 }
 
 function switchView(viewName) {
@@ -892,6 +1008,8 @@ elements.refreshButton.addEventListener("click", loadState);
 elements.sampleMorphologySelect.addEventListener("change", renderBodyPlanExamples);
 elements.sampleForm.addEventListener("submit", createSample);
 elements.runForm.addEventListener("submit", startBatch);
+elements.settingsForm.addEventListener("submit", saveSettings);
+window.addEventListener("nito-three-ready", () => hydrateModelViewers(elements.sampleDetail));
 elements.batchList.addEventListener("click", (event) => {
   const button = event.target.closest("button[data-batch-id]");
   if (!button) return;
@@ -927,7 +1045,11 @@ elements.sampleDetail.addEventListener("click", async (event) => {
   if (actionButtonElement) {
     actionButtonElement.disabled = true;
     try {
-      await startSampleAction(actionButtonElement.dataset.sampleId, actionButtonElement.dataset.sampleAction);
+      if (actionButtonElement.dataset.sampleAction === "open-blender") {
+        await openBlenderSample(actionButtonElement.dataset.sampleId);
+      } else {
+        await startSampleAction(actionButtonElement.dataset.sampleId, actionButtonElement.dataset.sampleAction);
+      }
     } catch (error) {
       elements.statusLine.textContent = error.message;
     } finally {

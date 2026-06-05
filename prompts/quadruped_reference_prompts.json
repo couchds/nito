@@ -67,7 +67,7 @@
       "body_plan": "medium_quadruped",
       "variant_tags": ["armored", "long_tail"],
       "armor_state": "armored",
-      "mesh_forward_axis": "POS_Y",
+      "mesh_forward_axis": "POS_X",
       "label_profile": "MEDIUM",
       "animal_description": "athletic medium-sized dog with a straight tail, alert ears, lean chest, and balanced working-dog proportions",
       "equipment_description": "light symmetrical leather-and-brushed-steel adventuring armor on the chest, shoulders, and hips, with all leg joints unobstructed"
@@ -79,7 +79,7 @@
       "body_plan": "medium_quadruped",
       "variant_tags": ["unarmored", "long_tail"],
       "armor_state": "unarmored",
-      "mesh_forward_axis": "POS_Y",
+      "mesh_forward_axis": "POS_X",
       "label_profile": "MEDIUM",
       "animal_description": "sleek domestic cat with upright ears, long tail, compact paws, and flexible feline proportions",
       "equipment_description": "none, visible natural fur and anatomy with simple markings"
@@ -91,7 +91,7 @@
       "body_plan": "medium_quadruped",
       "variant_tags": ["armored", "long_tail"],
       "armor_state": "armored",
-      "mesh_forward_axis": "POS_Y",
+      "mesh_forward_axis": "POS_X",
       "label_profile": "MEDIUM",
       "animal_description": "slim agile cat with upright ears, long tail, compact paws, and balanced feline proportions",
       "equipment_description": "minimal symmetrical scout armor with a small chest harness, shoulder plates, and hip plates, leaving knees, elbows, ankles, and paws clear"
@@ -103,7 +103,7 @@
       "body_plan": "hind_leg_dominant",
       "variant_tags": ["unarmored", "webbed_feet"],
       "armor_state": "unarmored",
-      "mesh_forward_axis": "POS_Y",
+      "mesh_forward_axis": "POS_X",
       "label_profile": "STOCKY",
       "animal_description": "stocky frog with wide-set eyes, broad body, short front legs, powerful folded rear legs, and webbed feet",
       "equipment_description": "none, smooth natural skin with simple color patterning"
@@ -115,7 +115,7 @@
       "body_plan": "long_legged_ungulate",
       "variant_tags": ["armored", "horns", "hooves"],
       "armor_state": "armored",
-      "mesh_forward_axis": "POS_Y",
+      "mesh_forward_axis": "POS_X",
       "label_profile": "STOCKY",
       "animal_description": "stocky ram with curled horns, sturdy hooves, compact torso, and strong shoulders",
       "equipment_description": "symmetrical fantasy plate barding over chest and flanks, with clean open gaps around knees, ankles, and hooves"
@@ -127,7 +127,7 @@
       "body_plan": "hind_leg_dominant",
       "variant_tags": ["unarmored", "short_tail"],
       "armor_state": "unarmored",
-      "mesh_forward_axis": "POS_Y",
+      "mesh_forward_axis": "POS_X",
       "label_profile": "STOCKY",
       "animal_description": "rabbit with long upright ears, compact torso, small front paws, large rear feet, and a short tail",
       "equipment_description": "none, soft simple fur silhouette with anatomy visible"
@@ -139,7 +139,7 @@
       "body_plan": "shell_reptile",
       "variant_tags": ["unarmored", "shell", "short_tail"],
       "armor_state": "unarmored",
-      "mesh_forward_axis": "POS_Y",
+      "mesh_forward_axis": "POS_X",
       "label_profile": "STOCKY",
       "animal_description": "low turtle with domed shell, short tail, sturdy head and neck, and four clearly visible walking legs",
       "equipment_description": "none, natural shell plates simplified into readable broad shapes"
@@ -151,7 +151,7 @@
       "body_plan": "long_legged_ungulate",
       "variant_tags": ["unarmored", "horns", "hooves", "short_tail"],
       "armor_state": "unarmored",
-      "mesh_forward_axis": "POS_Y",
+      "mesh_forward_axis": "POS_X",
       "label_profile": "HORSE",
       "animal_description": "slender deer with long legs, small hooves, narrow chest, short tail, and modest antlers",
       "equipment_description": "none, natural coat with subtle markings and unobstructed joints"

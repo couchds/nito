@@ -9,6 +9,8 @@ from pathlib import Path
 
 import bpy
 
+ADDON_MODULE = "quadruped_walk_cycle"
+
 
 def parse_args() -> argparse.Namespace:
     script_args = sys.argv[sys.argv.index("--") + 1 :] if "--" in sys.argv else []
@@ -31,8 +33,36 @@ def register_addon() -> None:
     root = repo_root()
     if str(root) not in sys.path:
         sys.path.insert(0, str(root))
-    addon = importlib.import_module("quadruped_walk_cycle")
-    addon.register()
+    disable_loaded_addon()
+    addon = importlib.import_module(ADDON_MODULE)
+    try:
+        addon.register()
+    except ValueError as error:
+        if "already registered" not in str(error):
+            raise
+        print(f"QWalk add-on was already registered; continuing with existing Blender registration: {error}")
+
+
+def disable_loaded_addon() -> None:
+    try:
+        if ADDON_MODULE in bpy.context.preferences.addons:
+            bpy.ops.preferences.addon_disable(module=ADDON_MODULE)
+    except Exception as error:
+        print(f"Could not disable existing QWalk add-on registration: {error}")
+
+    addon = sys.modules.get(ADDON_MODULE)
+    if addon and hasattr(addon, "unregister"):
+        try:
+            addon.unregister()
+        except Exception as error:
+            print(f"Could not unregister existing QWalk module cleanly: {error}")
+
+    for module_name in sorted(
+        [name for name in sys.modules if name == ADDON_MODULE or name.startswith(f"{ADDON_MODULE}.")],
+        key=len,
+        reverse=True,
+    ):
+        del sys.modules[module_name]
 
 
 def resolve_mesh(name: str) -> bpy.types.Object:

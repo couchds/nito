@@ -5,7 +5,15 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Nito</title>
     <link rel="stylesheet" href="/static/app.css">
-    <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.164.1/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.164.1/examples/jsm/"
+        }
+      }
+    </script>
+    <script type="module" src="/static/three-viewer.js"></script>
   </head>
   <body>
     <header class="topbar">
@@ -29,6 +37,7 @@
           <button class="tab" type="button" data-view="samples">Samples</button>
           <button class="tab" type="button" data-view="create">Create</button>
           <button class="tab" type="button" data-view="jobs">Jobs</button>
+          <button class="tab" type="button" data-view="settings">Settings</button>
         </nav>
 
         <section id="batchesView" class="view is-active">
@@ -182,6 +191,23 @@
           </div>
           <div id="jobList" class="job-list"></div>
           <pre id="jobLog" class="job-log">Select a job to view output.</pre>
+        </section>
+
+        <section id="settingsView" class="view">
+          <div class="section-heading">
+            <h2>Settings</h2>
+          </div>
+          <form id="settingsForm" class="content-band settings-form">
+            <section class="panel-section">
+              <h2>Blender</h2>
+              <label>
+                Blender executable
+                <input id="blenderPathInput" name="blenderPath" type="text" placeholder="C:\Program Files\Blender Foundation\Blender\blender.exe">
+              </label>
+              <p id="settingsBlenderStatus" class="field-help">Used for Blender prep and opening label files.</p>
+              <button id="saveSettingsButton" class="primary-action" type="submit">Save Settings</button>
+            </section>
+          </form>
         </section>
       </section>
     </main>

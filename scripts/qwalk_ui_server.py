@@ -13,6 +13,7 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 import uuid
 import urllib.error
 import urllib.request
@@ -27,6 +28,7 @@ WEB_ROOT = REPO_ROOT / "web"
 DEFAULT_WORK_ROOT = REPO_ROOT / "data" / "automated_training"
 DEFAULT_CATALOG = REPO_ROOT / "prompts" / "quadruped_reference_prompts.json"
 WORKFLOW_SCRIPT = REPO_ROOT / "scripts" / "automated_training_workflow.py"
+DEFAULT_BLENDER = r"C:\Program Files (x86)\Steam\steamapps\common\Blender\blender.exe"
 UI_DB_NAME = "qwalk_ui.sqlite3"
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 MODEL_EXTENSIONS = {".glb", ".gltf"}
@@ -63,6 +65,9 @@ LEGACY_BODY_PLAN_ALIASES = {
     "lagomorph": "hind_leg_dominant",
     "reptile_shell": "shell_reptile",
 }
+
+mimetypes.add_type("model/gltf-binary", ".glb")
+mimetypes.add_type("model/gltf+json", ".gltf")
 
 
 def workflow_python_executable() -> str:
@@ -748,6 +753,7 @@ class WorkflowStore:
             command.append("--dry-run")
         if payload.get("prepareLabelWork"):
             command.append("--prepare-label-work")
+            command.extend(["--blender", self.blender_path()])
         if payload.get("continueOnError", True):
             command.append("--continue-on-error")
 
@@ -757,6 +763,47 @@ class WorkflowStore:
 
     def workflow_command(self, *parts: str) -> list[str]:
         return [WORKFLOW_PYTHON, str(WORKFLOW_SCRIPT), "--work-root", str(self.work_root), *parts]
+
+    def settings(self) -> dict[str, Any]:
+        blender_path = self.job_db.meta_value("blender_path") or os.environ.get("BLENDER_EXE", DEFAULT_BLENDER)
+        return {
+            "blender_path": blender_path,
+            "blender_exists": Path(blender_path).expanduser().exists() if blender_path else False,
+        }
+
+    def update_settings(self, payload: dict[str, Any]) -> dict[str, Any]:
+        blender_path = str(payload.get("blenderPath") or "").strip().strip("\"'")
+        if blender_path:
+            path = Path(blender_path).expanduser()
+            if path.suffix.lower() != ".exe":
+                raise ValueError("Blender path should point to blender.exe.")
+            if not path.exists():
+                raise FileNotFoundError(f"Blender executable not found: {blender_path}")
+            self.job_db.set_meta_value("blender_path", str(path.resolve()))
+        else:
+            self.job_db.set_meta_value("blender_path", "")
+        return self.settings()
+
+    def blender_path(self) -> str:
+        settings = self.settings()
+        blender_path = str(settings.get("blender_path") or "")
+        if not blender_path or not Path(blender_path).expanduser().exists():
+            raise FileNotFoundError(f"Blender executable not found: {blender_path or '<unset>'}")
+        return str(Path(blender_path).expanduser().resolve())
+
+    def open_blender_sample(self, sample_id_value: str) -> dict[str, Any]:
+        sample_id = safe_token(sample_id_value, "")
+        if not sample_id or sample_id != sample_id_value:
+            raise ValueError("Invalid sample id.")
+        state = read_json(self.work_root / sample_id / "workflow_state.json", {})
+        if not state:
+            raise ValueError(f"Sample not found: {sample_id}")
+        blend_path = Path(str(state.get("label_work_blend") or "")).expanduser()
+        if not blend_path.exists():
+            raise FileNotFoundError("Label-work Blender file does not exist yet. Prepare Blender file first.")
+        blender = self.blender_path()
+        subprocess.Popen([blender, str(blend_path.resolve())], cwd=str(REPO_ROOT))
+        return {"sample_id": sample_id, "blender_path": blender, "blend_file": str(blend_path.resolve())}
 
     def start_sample_action(self, sample_id_value: str, action: str, payload: dict[str, Any]) -> dict[str, Any]:
         sample_id = safe_token(sample_id_value, "")
@@ -782,7 +829,15 @@ class WorkflowStore:
         elif action == "poll-tripo":
             commands = [self.workflow_command("poll-tripo", "--sample-id", sample_id)]
         elif action == "prepare-label-work":
-            commands = [self.workflow_command("prepare-label-work", "--sample-id", sample_id)]
+            commands = [
+                self.workflow_command(
+                    "prepare-label-work",
+                    "--sample-id",
+                    sample_id,
+                    "--blender",
+                    self.blender_path(),
+                )
+            ]
         elif action == "run-pipeline":
             face_limit = self.face_limit_for_payload(payload)
             job_payload["faceLimit"] = face_limit
@@ -792,7 +847,15 @@ class WorkflowStore:
                 self.workflow_command("poll-tripo", "--sample-id", sample_id),
             ]
             if payload.get("prepareLabelWork"):
-                commands.append(self.workflow_command("prepare-label-work", "--sample-id", sample_id))
+                commands.append(
+                    self.workflow_command(
+                        "prepare-label-work",
+                        "--sample-id",
+                        sample_id,
+                        "--blender",
+                        self.blender_path(),
+                    )
+                )
         else:
             raise ValueError(f"Unknown sample action: {action}")
 
@@ -914,7 +977,7 @@ class WorkflowStore:
         if armor_state and armor_state not in variant_tags:
             variant_tags.insert(0, armor_state)
         label_profile = str(payload.get("labelProfile") or "AUTO").strip() or "AUTO"
-        mesh_forward_axis = str(payload.get("meshForwardAxis") or "POS_Y").strip() or "POS_Y"
+        mesh_forward_axis = str(payload.get("meshForwardAxis") or "POS_X").strip() or "POS_X"
         now = int(time.time())
         state = {
             "sample_id": sample_id,
@@ -1079,6 +1142,7 @@ class QWalkUIHandler(BaseHTTPRequestHandler):
                     "batches": batches,
                     "batch_runs": batches,
                     "jobs": self.store.jobs(),
+                    "settings": self.store.settings(),
                 }
             )
         elif parsed.path == "/api/jobs":
@@ -1117,9 +1181,19 @@ class QWalkUIHandler(BaseHTTPRequestHandler):
             if parsed.path == "/api/run-batch":
                 job = self.store.start_run_batch(payload)
                 self.send_json(job, status=202)
+            elif parsed.path == "/api/settings":
+                self.send_json(self.store.update_settings(payload))
             elif parsed.path == "/api/samples":
                 sample = self.store.create_sample(payload)
                 self.send_json(sample, status=201)
+            elif parsed.path.startswith("/api/samples/") and parsed.path.endswith("/open-blender"):
+                parts = parsed.path.strip("/").split("/")
+                if len(parts) != 4 or parts[0] != "api" or parts[1] != "samples" or parts[3] != "open-blender":
+                    self.send_error(404, "Not found")
+                    return
+                sample_id = unquote(parts[2])
+                result = self.store.open_blender_sample(sample_id)
+                self.send_json(result)
             elif parsed.path.startswith("/api/samples/") and parsed.path.endswith("/reset-stale"):
                 parts = parsed.path.strip("/").split("/")
                 if len(parts) != 4 or parts[0] != "api" or parts[1] != "samples" or parts[3] != "reset-stale":
@@ -1206,21 +1280,30 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> None:
+def run_server() -> None:
     args = parse_args()
     store = WorkflowStore(Path(args.work_root), Path(args.catalog))
     QWalkUIHandler.store = store
     server = ThreadingHTTPServer((args.host, args.port), QWalkUIHandler)
     url = f"http://{args.host}:{args.port}"
-    if sys.stdout is not None:
-        try:
+    try:
+        if sys.stdout is not None and not sys.stdout.closed:
             print(f"Nito running at {url}")
-        except OSError:
-            pass
+    except Exception:
+        pass
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         pass
+
+
+def main() -> None:
+    try:
+        run_server()
+    except Exception:
+        DEFAULT_WORK_ROOT.mkdir(parents=True, exist_ok=True)
+        (DEFAULT_WORK_ROOT / "ui_server_startup_error.log").write_text(traceback.format_exc(), encoding="utf-8")
+        raise
 
 
 if __name__ == "__main__":
