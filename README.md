@@ -1,6 +1,21 @@
-# Quadruped Walk Cycle Generator
+# Nito
 
-A Blender add-on that generates looping walk-cycle keys for four-legged armatures. It can animate foot or paw IK target bones when the rig has them, or fall back to simple FK rotation on upper/lower/foot bone chains.
+Nito is a local training-asset pipeline for quadruped characters. It helps create prompt-backed samples, generate multi-view reference art, turn those views into Tripo3D models, prepare the models for Blender skeleton placement, and collect verified labels for training a guide initializer that can place skeleton landmarks on new meshes.
+
+The repo still includes the QWalk Blender add-on that powers the manual rigging and walk-cycle workflow. QWalk can generate looping walk-cycle keys for four-legged armatures, animate foot or paw IK target bones when the rig has them, or fall back to simple FK rotation on upper/lower/foot bone chains.
+
+## Nito Workflow
+
+1. Create a sample from a prompt or from the quadruped prompt catalog.
+2. Generate front, left, right, and back reference art with OpenAI image generation.
+3. Submit the generated views to Tripo3D to create a 3D model.
+4. Open the prepared Blender file and place or correct the skeleton guides manually.
+5. Export verified labels for future model training.
+6. Train and evaluate a guide initializer that predicts skeleton landmarks and animal/body-plan labels for unseen meshes.
+
+## Blender Add-on
+
+Use this section when you want to install the bundled Blender add-on directly or animate a manually prepared quadruped rig.
 
 ## Install
 
@@ -139,9 +154,9 @@ Real labels are treated as ground truth and are only loaded from `--real-data` w
 
 For repeatable real-label creation, use the repo-local Codex skill at `skills/qwalk-gold-labeler/SKILL.md`. It defines the gold-label loop: create a candidate guide, render side/front/rear/top/quarter review images with `scripts/render_qwalk_label_review.py`, apply exact coordinate corrections with `scripts/apply_qwalk_guide_edits.py`, repeat until every view passes, then export with `--verified`.
 
-## Automated Training Asset Workflow
+## Nito Training Asset Workflow
 
-The `scripts/automated_training_workflow.py` script scaffolds the end-to-end real-data pipeline:
+The `scripts/automated_training_workflow.py` script scaffolds Nito's end-to-end real-data pipeline:
 
 1. Create one or more catalog-backed sample specs.
 2. Generate front/left/right/back reference art with OpenAI `gpt-image-2`.
@@ -160,7 +175,7 @@ Copy-Item .env.example .env.local
 
 .\.venv\Scripts\python.exe scripts\automated_training_workflow.py init-batch `
   --count 4 `
-  --sample-prefix qwalk `
+  --sample-prefix nito `
   --seed 42
 
 $sampleId = "paste_created_sample_id_here"
@@ -182,19 +197,19 @@ For local batch generation, use `run-batch`. It creates `N` catalog-backed sampl
 ```powershell
 .\.venv\Scripts\python.exe scripts\automated_training_workflow.py run-batch `
   --count 8 `
-  --sample-prefix qwalk `
+  --sample-prefix nito `
   --seed 42
 ```
 
 Add `--prepare-label-work` to immediately import each downloaded model into Blender, create candidate QWalk guides, and render review images for manual correction. Use `--dry-run` to create local sample state and print the planned random face counts without calling OpenAI or Tripo3D.
 
-Start the local web UI when you want a dashboard over the same batch runner:
+Start Nito when you want a dashboard over the same batch runner:
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\qwalk_ui_server.py
 ```
 
-Then open `http://127.0.0.1:8765`. The UI treats batch summaries as candidate training sets, shows the samples contained in each batch, and still lets a sample appear in multiple batches because membership is computed from the saved batch summaries. Use the Create page to create a prompt-backed sample directly, storing the original prompt plus generated front/left/right/back OpenAI prompts in that sample's workflow state. Prompted samples require Body plan and can optionally carry Armor and Variant tags; `animal_type` defaults to `unknown` for prompted samples. The same page can also launch catalog-backed `run-batch` jobs. The Samples page shows each sample's prompt, labels, reference images, Tripo multiview images, Blender review renders, and downloaded GLB/GLTF model when those artifacts exist.
+Then open `http://127.0.0.1:8765`. Nito treats batch summaries as candidate training sets, shows the samples contained in each batch, and still lets a sample appear in multiple batches because membership is computed from the saved batch summaries. Use the Create page to create a prompt-backed sample directly, storing the original prompt plus generated front/left/right/back OpenAI prompts in that sample's workflow state. Prompted samples require Body plan and can optionally carry Armor and Variant tags; `animal_type` defaults to `unknown` for prompted samples. The same page can also launch catalog-backed `run-batch` jobs. The Samples page shows each sample's prompt, labels, reference images, Tripo multiview images, Blender review renders, and downloaded GLB/GLTF model when those artifacts exist.
 
 The older Tripo-generated multiview path is still available for experiments. `generate-multiview` submits Tripo3D's `generate_multiview_image` task, then stores `front`, `left`, `back`, and `right` images under the sample's `multiview/` directory. Downloading those task-result images is only local artifact retrieval; the Tripo generation request itself is the credit-consuming step.
 If image download fails after task completion, rerun `poll-multiview --sample-id <id>` to query the existing task and retry the local downloads without submitting another generation.

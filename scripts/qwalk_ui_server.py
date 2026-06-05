@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Local web UI for the QWalk training-asset workflow."""
+"""Local web UI for the Nito training-asset workflow."""
 
 from __future__ import annotations
 
@@ -14,10 +14,12 @@ import sys
 import threading
 import time
 import uuid
+import urllib.error
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -31,6 +33,14 @@ MODEL_EXTENSIONS = {".glb", ".gltf"}
 REFERENCE_ORDER = ("front", "left", "right", "back")
 REVIEW_ORDER = ("front", "left", "right", "rear", "top", "quarter")
 STALE_JOB_SECONDS = 15 * 60
+DEFAULT_COMMAND_TIMEOUT_SECONDS = 30 * 60
+COMMAND_TIMEOUT_SECONDS = {
+    "generate-reference": 10 * 60,
+    "submit-tripo": 10 * 60,
+    "poll-tripo": 20 * 60,
+    "prepare-label-work": 15 * 60,
+    "run-batch": 60 * 60,
+}
 RUNNING_SAMPLE_STATUS_SUFFIXES = ("running", "polling")
 SAMPLE_ACTION_STATUS = {
     "generate-reference": "reference_running",
@@ -249,6 +259,17 @@ class JobDatabase:
                 (status, finished_at, returncode, int(time.time()), job_id),
             )
 
+    def acknowledge_stale_job(self, job_id: str) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                """
+                UPDATE ui_jobs
+                SET status = 'stale_acknowledged', updated_at = ?
+                WHERE job_id = ? AND status = 'stale'
+                """,
+                (int(time.time()), job_id),
+            )
+
     def mark_stale_jobs(self, active_job_ids: set[str], stale_seconds: int) -> list[dict[str, Any]]:
         now = int(time.time())
         cutoff = now - stale_seconds
@@ -333,6 +354,7 @@ class WorkflowStore:
         self.work_root = work_root.expanduser().resolve()
         self.catalog_path = catalog_path.expanduser().resolve()
         self.job_root = self.work_root / "ui_jobs"
+        self.job_root.mkdir(parents=True, exist_ok=True)
         self.active_job_ids: set[str] = set()
         self.job_db = JobDatabase(self.work_root / UI_DB_NAME, self.job_root)
         self.refresh_stale_jobs()
@@ -390,6 +412,10 @@ class WorkflowStore:
             review_images = self.review_images(state.get("review_dir"))
             model_file = state.get("downloaded_model", "")
             model_url = self.artifact_url(model_file)
+            remote_model_url = state.get("downloaded_model_url", "") or self.tripo_output_url(state, "pbr_model")
+            remote_preview_url = self.tripo_output_url(state, "rendered_image")
+            remote_model_proxy_url = self.tripo_proxy_url(sample_id, "model") if remote_model_url else ""
+            remote_preview_proxy_url = self.tripo_proxy_url(sample_id, "preview") if remote_preview_url else ""
             ui_job = self.sample_ui_job(state)
             status = state.get("status", "")
             if self.sample_status_is_running(status) and ui_job.get("status") == "stale":
@@ -424,7 +450,11 @@ class WorkflowStore:
                         "name": Path(model_file).name if model_file else "",
                         "type": Path(model_file).suffix.lower().removeprefix(".") if model_file else "",
                         "url": model_url,
-                        "remote_url": state.get("downloaded_model_url", ""),
+                        "remote_url": remote_model_url,
+                        "viewer_url": remote_model_proxy_url,
+                        "preview_url": remote_preview_url,
+                        "preview_proxy_url": remote_preview_proxy_url,
+                        "source": "local" if model_url else "tripo" if remote_model_url else "",
                     },
                     "model_file": model_file,
                     "model_url": model_url,
@@ -599,6 +629,65 @@ class WorkflowStore:
         rendered = output.get("rendered_image") if isinstance(output, dict) else ""
         return rendered if isinstance(rendered, str) else ""
 
+    def tripo_output_url(self, state: dict[str, Any], key: str) -> str:
+        response = state.get("tripo_result_response")
+        if not isinstance(response, dict):
+            return ""
+        data = response.get("data")
+        containers: list[Any] = []
+        if isinstance(data, dict):
+            containers.extend([data.get("output"), data.get("result")])
+        containers.extend([response.get("output"), response.get("result")])
+        for container in containers:
+            value = self.url_value(container, key)
+            if value:
+                return value
+        return ""
+
+    def url_value(self, container: Any, key: str) -> str:
+        if not isinstance(container, dict):
+            return ""
+        value = container.get(key)
+        if isinstance(value, str) and value.startswith(("http://", "https://")):
+            return value
+        if isinstance(value, dict):
+            nested = value.get("url")
+            if isinstance(nested, str) and nested.startswith(("http://", "https://")):
+                return nested
+        return ""
+
+    def tripo_proxy_url(self, sample_id: str, kind: str) -> str:
+        return f"/tripo-output?sample_id={quote(sample_id)}&kind={quote(kind)}"
+
+    def tripo_remote_output(self, sample_id_value: str, kind: str) -> tuple[str, str]:
+        sample_id = safe_token(sample_id_value, "")
+        if not sample_id or sample_id != sample_id_value:
+            raise ValueError("Invalid sample id.")
+        state = read_json(self.work_root / sample_id / "workflow_state.json", {})
+        if not state:
+            raise FileNotFoundError(f"Sample not found: {sample_id}")
+        if kind == "preview":
+            url = self.tripo_output_url(state, "rendered_image")
+        elif kind == "model":
+            url = state.get("downloaded_model_url", "") or self.tripo_output_url(state, "pbr_model")
+        else:
+            raise ValueError(f"Unsupported Tripo output kind: {kind}")
+        if not url:
+            raise FileNotFoundError(f"Tripo {kind} output not found for {sample_id}")
+        return url, self.remote_mime_type(url, kind)
+
+    def remote_mime_type(self, url: str, kind: str) -> str:
+        extension = Path(urlparse(url).path).suffix.lower()
+        if extension == ".glb":
+            return "model/gltf-binary"
+        if extension == ".gltf":
+            return "model/gltf+json"
+        if extension == ".webp":
+            return "image/webp"
+        return mimetypes.guess_type(urlparse(url).path)[0] or (
+            "application/octet-stream" if kind == "model" else "image/webp"
+        )
+
     def artifact_url(self, path_value: str) -> str:
         if not path_value:
             return ""
@@ -761,6 +850,49 @@ class WorkflowStore:
         }
         write_json(path, state)
 
+    def inferred_sample_status(self, state: dict[str, Any]) -> str:
+        reference_images = state.get("openai_reference_images")
+        if state.get("label_work_blend"):
+            return "label_work_prepared"
+        if state.get("downloaded_model"):
+            return "model_downloaded"
+        if state.get("tripo_task_id"):
+            return "tripo_multiview_model_submitted"
+        if isinstance(reference_images, dict) and all(reference_images.get(view) for view in REFERENCE_ORDER):
+            return "openai_reference_generated"
+        return "initialized"
+
+    def reset_stale_sample_job(self, sample_id_value: str) -> dict[str, Any]:
+        sample_id = safe_token(sample_id_value, "")
+        if not sample_id or sample_id != sample_id_value:
+            raise ValueError("Invalid sample id.")
+        path = self.work_root / sample_id / "workflow_state.json"
+        state = read_json(path, {})
+        if not state:
+            raise ValueError(f"Sample not found: {sample_id}")
+        ui_job = state.get("ui_job") if isinstance(state.get("ui_job"), dict) else {}
+        if state.get("status") != "ui_job_stale" and ui_job.get("status") != "stale":
+            raise ValueError("Sample does not have a stale UI job.")
+
+        now = int(time.time())
+        stale_jobs = state.get("stale_ui_jobs") if isinstance(state.get("stale_ui_jobs"), list) else []
+        stale_jobs.append({**ui_job, "reset_at": now})
+        state["stale_ui_jobs"] = stale_jobs[-10:]
+        job_id = str(ui_job.get("job_id") or "")
+        if job_id:
+            self.job_db.acknowledge_stale_job(job_id)
+        state["ui_job"] = {**ui_job, "status": "stale_acknowledged", "reset_at": now}
+        state["status"] = self.inferred_sample_status(state)
+        state["updated_at"] = now
+        write_json(path, state)
+        return {"sample_id": sample_id, "status": state["status"], "ui_job": state["ui_job"]}
+
+    def command_timeout_seconds(self, command: list[str]) -> int:
+        for part in command:
+            if part in COMMAND_TIMEOUT_SECONDS:
+                return COMMAND_TIMEOUT_SECONDS[part]
+        return DEFAULT_COMMAND_TIMEOUT_SECONDS
+
     def create_sample(self, payload: dict[str, Any]) -> dict[str, Any]:
         prompt = str(payload.get("prompt") or "").strip()
         if not prompt:
@@ -842,35 +974,49 @@ class WorkflowStore:
 
     def _run_job(self, job_id: str, commands: list[list[str]]) -> None:
         log_path = self.job_root / f"{job_id}.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
         returncode = 0
         status = "completed"
         try:
             with log_path.open("w", encoding="utf-8") as log:
                 for index, command in enumerate(commands, start=1):
-                    if len(commands) > 1:
-                        log.write(f"\n[{index}/{len(commands)}] {' '.join(command)}\n")
+                    prefix = f"[{index}/{len(commands)}] " if len(commands) > 1 else ""
+                    timeout = self.command_timeout_seconds(command)
+                    log.write(f"\n{prefix}{' '.join(command)}\n")
+                    log.write(f"Timeout: {timeout}s\n")
+                    log.flush()
+                    try:
+                        result = subprocess.run(
+                            command,
+                            cwd=str(REPO_ROOT),
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT,
+                            text=True,
+                            encoding="utf-8",
+                            errors="replace",
+                            env=os.environ.copy(),
+                            timeout=timeout,
+                            check=False,
+                        )
+                        if result.stdout:
+                            log.write(result.stdout)
+                            log.flush()
+                        returncode = result.returncode
+                    except subprocess.TimeoutExpired as error:
+                        status = "failed"
+                        returncode = 124
+                        if error.stdout:
+                            log.write(str(error.stdout))
+                        log.write(f"\nCommand timed out after {timeout}s.\n")
                         log.flush()
-                    process = subprocess.Popen(
-                        command,
-                        cwd=str(REPO_ROOT),
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        text=True,
-                        encoding="utf-8",
-                        errors="replace",
-                        env=os.environ.copy(),
-                    )
-                    assert process.stdout is not None
-                    for line in process.stdout:
-                        log.write(line)
-                        log.flush()
-                    returncode = process.wait()
+                        break
                     if returncode != 0:
                         status = "failed"
                         break
         except Exception as error:
             status = "failed"
             returncode = 1
+            log_path.parent.mkdir(parents=True, exist_ok=True)
             with log_path.open("a", encoding="utf-8") as log:
                 log.write(f"\nUI job runner failed: {error}\n")
         finally:
@@ -951,6 +1097,16 @@ class QWalkUIHandler(BaseHTTPRequestHandler):
                 self.send_file(self.store.artifact_path(root_value, path_value))
             except (OSError, ValueError):
                 self.send_error(404, "Artifact not found")
+        elif parsed.path == "/tripo-output":
+            params = parse_qs(parsed.query)
+            sample_id = params.get("sample_id", [""])[0]
+            kind = params.get("kind", ["model"])[0]
+            try:
+                self.send_tripo_output(sample_id, kind)
+            except FileNotFoundError:
+                self.send_error(404, "Tripo output not found")
+            except (OSError, ValueError, urllib.error.URLError):
+                self.send_error(502, "Could not fetch Tripo output")
         else:
             self.send_error(404, "Not found")
 
@@ -964,6 +1120,14 @@ class QWalkUIHandler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/samples":
                 sample = self.store.create_sample(payload)
                 self.send_json(sample, status=201)
+            elif parsed.path.startswith("/api/samples/") and parsed.path.endswith("/reset-stale"):
+                parts = parsed.path.strip("/").split("/")
+                if len(parts) != 4 or parts[0] != "api" or parts[1] != "samples" or parts[3] != "reset-stale":
+                    self.send_error(404, "Not found")
+                    return
+                sample_id = unquote(parts[2])
+                result = self.store.reset_stale_sample_job(sample_id)
+                self.send_json(result)
             elif parsed.path.startswith("/api/samples/") and "/actions/" in parsed.path:
                 parts = parsed.path.strip("/").split("/")
                 if len(parts) != 5 or parts[0] != "api" or parts[1] != "samples" or parts[3] != "actions":
@@ -1009,6 +1173,24 @@ class QWalkUIHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def send_tripo_output(self, sample_id: str, kind: str) -> None:
+        url, mime_type = self.store.tripo_remote_output(sample_id, kind)
+        request = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": "Nito/0.1 local-preview",
+                "Accept": "*/*",
+            },
+        )
+        with urllib.request.urlopen(request, timeout=120.0) as response:
+            body = response.read()
+        self.send_response(200)
+        self.send_header("Content-Type", mime_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
     def send_static_file(self, relative_value: str) -> None:
         path = (WEB_ROOT / unquote(relative_value)).resolve()
         path.relative_to(WEB_ROOT.resolve())
@@ -1016,7 +1198,7 @@ class QWalkUIHandler(BaseHTTPRequestHandler):
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run the local QWalk workflow UI.")
+    parser = argparse.ArgumentParser(description="Run the local Nito workflow UI.")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--work-root", default=str(DEFAULT_WORK_ROOT))
@@ -1031,7 +1213,10 @@ def main() -> None:
     server = ThreadingHTTPServer((args.host, args.port), QWalkUIHandler)
     url = f"http://{args.host}:{args.port}"
     if sys.stdout is not None:
-        print(f"QWalk UI running at {url}")
+        try:
+            print(f"Nito running at {url}")
+        except OSError:
+            pass
     try:
         server.serve_forever()
     except KeyboardInterrupt:

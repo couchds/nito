@@ -63,6 +63,23 @@ function tag(value) {
   return `<span class="tag ${statusClass(value)}">${escapeHtml(value || "unknown")}</span>`;
 }
 
+function emptyState(title, detail, actionLabel = "", viewName = "") {
+  return `
+    <div class="empty-state">
+      <span class="empty-mark" aria-hidden="true">N</span>
+      <div>
+        <strong>${escapeHtml(title)}</strong>
+        <p>${escapeHtml(detail)}</p>
+        ${
+          actionLabel && viewName
+            ? `<button type="button" data-view="${escapeHtml(viewName)}">${escapeHtml(actionLabel)}</button>`
+            : ""
+        }
+      </div>
+    </div>
+  `;
+}
+
 function labelText(value) {
   return String(value || "unknown").replaceAll("_", " ");
 }
@@ -209,7 +226,12 @@ function batchStatus(batch) {
 
 function renderBatches() {
   if (!state.batches.length) {
-    elements.batchList.innerHTML = '<p class="empty">No batches yet.</p>';
+    elements.batchList.innerHTML = emptyState(
+      "No batches yet",
+      "Create a catalog batch when you want a reusable training set.",
+      "Create Batch",
+      "create",
+    );
     return;
   }
   elements.batchList.innerHTML = state.batches
@@ -284,7 +306,12 @@ function batchSampleCard(sampleId) {
 
 function renderSamples() {
   if (!state.samples.length) {
-    elements.sampleList.innerHTML = '<p class="empty">No samples yet.</p>';
+    elements.sampleList.innerHTML = emptyState(
+      "No samples yet",
+      "Create a prompt-backed sample, then run it through the reference and model pipeline.",
+      "Create Sample",
+      "create",
+    );
     return;
   }
   elements.sampleList.innerHTML = state.samples.map((sample) => sampleCard(sample)).join("");
@@ -316,6 +343,7 @@ function sampleCard(sample, options = {}) {
             ${(sample.variant_tags || []).map((value) => tag(value)).join("")}
             ${sample.face_limit ? tag(`${sample.face_limit} faces`) : ""}
             ${sample.model?.url ? tag("model") : ""}
+            ${!sample.model?.url && sample.model?.remote_url ? tag("remote model") : ""}
             ${Object.keys(sample.reference_images || {}).length ? tag("reference") : ""}
             ${Object.keys(sample.multiview_images || {}).length ? tag("multiview") : ""}
             ${Object.keys(sample.review_images || {}).length ? tag("review") : ""}
@@ -364,30 +392,102 @@ function gallery(title, images, preferredOrder) {
 
 function modelPanel(sample) {
   const model = sample.model || {};
-  if (!model.url) {
+  const localUrl = model.url || "";
+  const remoteUrl = model.remote_url || "";
+  const viewerUrl = model.viewer_url || "";
+  const displayUrl = localUrl || remoteUrl || viewerUrl;
+  const previewUrl = model.preview_proxy_url || model.preview_url || "";
+  const safeDisplayUrl = escapeHtml(displayUrl);
+  const safeRemoteUrl = escapeHtml(remoteUrl);
+  const safePreviewUrl = escapeHtml(previewUrl);
+  const fallbackUrl = !localUrl && remoteUrl && viewerUrl && viewerUrl !== remoteUrl ? viewerUrl : "";
+  const safeFallbackUrl = escapeHtml(fallbackUrl);
+  const displayType = modelType(model, displayUrl);
+  const isRemoteOnly = Boolean(remoteUrl && !localUrl);
+  if (!displayUrl) {
     return `
       <h4>3D Model</h4>
       <p class="empty">No downloaded GLB/GLTF model for this sample yet.</p>
     `;
   }
-  const canEmbed = ["glb", "gltf"].includes(model.type);
+  const canEmbed = ["glb", "gltf"].includes(displayType);
   return `
     <h4>3D Model</h4>
-    <div class="model-panel">
+    <div class="model-panel ${isRemoteOnly ? "is-remote-only" : ""}">
+      ${
+        isRemoteOnly
+          ? `<div class="model-state-card">
+              <div>
+                <strong>Tripo model generated</strong>
+                <p>The remote GLB is ready, but the local download is missing. Retry the download to prep it for Blender.</p>
+              </div>
+              <button
+                type="button"
+                data-sample-id="${escapeHtml(sample.sample_id)}"
+                data-sample-action="poll-tripo"
+              >
+                Retry Download
+              </button>
+            </div>`
+          : ""
+      }
       ${
         canEmbed
-          ? `<model-viewer src="${model.url}" camera-controls auto-rotate shadow-intensity="0.7" exposure="0.9">
-              <a href="${model.url}" target="_blank" rel="noreferrer">Open model</a>
+          ? `<model-viewer
+              src="${safeDisplayUrl}"
+              ${previewUrl ? `poster="${safePreviewUrl}"` : ""}
+              ${fallbackUrl ? `data-fallback-src="${safeFallbackUrl}"` : ""}
+              camera-controls
+              auto-rotate
+              shadow-intensity="0.7"
+              exposure="0.9"
+            >
+              <a href="${safeDisplayUrl}" target="_blank" rel="noreferrer">Open model</a>
             </model-viewer>`
-          : `<p class="empty">Preview supports GLB/GLTF. This model is ${escapeHtml(model.type || "unknown")}.</p>`
+          : previewUrl
+            ? `<a class="model-render-preview" href="${safeRemoteUrl || safePreviewUrl}" target="_blank" rel="noreferrer">
+                <img src="${safePreviewUrl}" alt="${escapeHtml(sample.sample_id)} Tripo render">
+              </a>`
+            : `<p class="empty">Preview supports GLB/GLTF. This model is ${escapeHtml(displayType || "unknown")}.</p>`
       }
       <div class="model-actions">
-        <a href="${model.url}" target="_blank" rel="noreferrer">Open model</a>
-        ${model.remote_url ? `<a href="${model.remote_url}" target="_blank" rel="noreferrer">Source URL</a>` : ""}
+        <a href="${safeDisplayUrl}" target="_blank" rel="noreferrer">${localUrl ? "Open local model" : "Open remote GLB"}</a>
+        ${remoteUrl ? `<a href="${safeRemoteUrl}" target="_blank" rel="noreferrer">Source URL</a>` : ""}
+        ${viewerUrl && viewerUrl !== displayUrl ? `<a href="${escapeHtml(viewerUrl)}" target="_blank" rel="noreferrer">Proxy URL</a>` : ""}
+        ${previewUrl ? `<a href="${safePreviewUrl}" target="_blank" rel="noreferrer">Open Tripo render</a>` : ""}
       </div>
-      <p class="detail-meta">${escapeHtml(model.name || model.file)}</p>
+      <p class="detail-meta">
+        ${escapeHtml(localUrl ? model.name || model.file : "Remote Tripo GLB")}
+        ${isRemoteOnly ? " | browser preview may depend on Tripo CORS" : ""}
+      </p>
     </div>
   `;
+}
+
+function modelType(model, url) {
+  if (model.type) return model.type;
+  try {
+    const path = new URL(url, window.location.href).pathname;
+    const match = path.match(/\.([a-z0-9]+)$/i);
+    return match ? match[1].toLowerCase() : "";
+  } catch {
+    return "";
+  }
+}
+
+function hydrateModelViewers(container) {
+  container.querySelectorAll("model-viewer[data-fallback-src]").forEach((viewer) => {
+    viewer.addEventListener(
+      "error",
+      () => {
+        const fallbackSrc = viewer.dataset.fallbackSrc;
+        if (fallbackSrc && viewer.getAttribute("src") !== fallbackSrc) {
+          viewer.setAttribute("src", fallbackSrc);
+        }
+      },
+      { once: true },
+    );
+  });
 }
 
 function promptPanel(sample) {
@@ -444,6 +544,17 @@ function sampleActionPanel(sample) {
         </button>
         <span>${escapeHtml(nextAction.detail)}</span>
       </div>
+      ${
+        statusJob?.status === "stale"
+          ? `<div class="stale-callout">
+              <div>
+                <strong>Job stopped reporting</strong>
+                <p>Reset the stale state to rerun from the last saved artifact.</p>
+              </div>
+              <button type="button" data-reset-stale="${escapeHtml(sample.sample_id)}">Reset stale state</button>
+            </div>`
+          : ""
+      }
       <div class="tag-row">
         ${activeJob ? tag("running") : ""}
         ${statusJob?.status === "stale" ? tag("stale") : ""}
@@ -477,6 +588,7 @@ function activePipelineStage(sample, activeJob) {
 function pipelineState(sample, activeJob) {
   const hasRefs = hasReferenceSet(sample);
   const hasModelTask = Boolean(sample.tripo_task_id);
+  const hasRemoteModel = Boolean(sample.model?.remote_url);
   const hasModel = Boolean(sample.model?.url);
   const hasBlenderFile = Boolean(sample.label_work_blend);
   const activeStage = activePipelineStage(sample, activeJob);
@@ -502,8 +614,8 @@ function pipelineState(sample, activeJob) {
     {
       key: "model",
       title: "3D model",
-      detail: hasModel ? "GLB ready" : hasModelTask ? "Task submitted" : "Tripo generation",
-      state: stepState("model", hasModel, hasRefs),
+      detail: hasModel ? "Local GLB ready" : hasRemoteModel ? "Remote GLB ready" : hasModelTask ? "Task submitted" : "Tripo generation",
+      state: stepState("model", hasModel, hasRefs || hasRemoteModel),
     },
     {
       key: "blender",
@@ -559,10 +671,13 @@ function nextPipelineAction(sample, activeJob) {
     };
   }
   if (sample.tripo_task_id && !sample.model?.url) {
+    const hasRemoteModel = Boolean(sample.model?.remote_url);
     return {
       action: "poll-tripo",
       label: "Check / Download Model",
-      detail: "Polls the Tripo task and downloads the GLB when ready.",
+      detail: hasRemoteModel
+        ? "Tripo generated the GLB; retry the local download for Blender."
+        : "Polls the Tripo task and downloads the GLB when ready.",
     };
   }
   if (!sample.label_work_blend) {
@@ -610,11 +725,15 @@ function renderSampleDetail() {
     ${gallery("Blender Review Renders", sample.review_images, ["front", "left", "right", "rear", "top", "quarter"])}
     ${promptPanel(sample)}
   `;
+  hydrateModelViewers(elements.sampleDetail);
 }
 
 function renderJobs() {
   if (!state.jobs.length) {
-    elements.jobList.innerHTML = '<p class="empty">No UI jobs yet.</p>';
+    elements.jobList.innerHTML = emptyState(
+      "No jobs yet",
+      "Pipeline runs will appear here with elapsed time, status, and logs.",
+    );
     return;
   }
   elements.jobList.innerHTML = state.jobs
@@ -731,6 +850,18 @@ async function startSampleAction(sampleId, action) {
   renderSampleDetail();
 }
 
+async function resetStaleSample(sampleId) {
+  elements.statusLine.textContent = "Resetting stale job state";
+  await fetchJson(`/api/samples/${encodeURIComponent(sampleId)}/reset-stale`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  state.selectedSampleId = sampleId;
+  await loadState();
+  renderSampleDetail();
+}
+
 function switchView(viewName) {
   const activeTab = {
     batchDetail: "batches",
@@ -780,6 +911,18 @@ elements.sampleList.addEventListener("click", (event) => {
   openSample(button.dataset.sampleId);
 });
 elements.sampleDetail.addEventListener("click", async (event) => {
+  const resetButton = event.target.closest("button[data-reset-stale]");
+  if (resetButton) {
+    resetButton.disabled = true;
+    try {
+      await resetStaleSample(resetButton.dataset.resetStale);
+    } catch (error) {
+      elements.statusLine.textContent = error.message;
+    } finally {
+      resetButton.disabled = false;
+    }
+    return;
+  }
   const actionButtonElement = event.target.closest("button[data-sample-action]");
   if (actionButtonElement) {
     actionButtonElement.disabled = true;
