@@ -119,16 +119,10 @@ def parse_args() -> argparse.Namespace:
     )
     reference_generate.add_argument("--overwrite", action="store_true")
 
-    reference = subparsers.add_parser("reference-placeholder", help="Record the future reference-image step.")
-    reference.add_argument("--sample-id", required=True)
-    reference.add_argument("--reference-image", default="", help="Optional existing local reference image path.")
-    reference.add_argument("--reference-image-url", default="", help="Optional existing public reference image URL.")
-
     submit = subparsers.add_parser("submit-tripo", help="Submit a multiview-to-model task to Tripo3D.")
     submit.add_argument("--sample-id", required=True)
     submit.add_argument("--api-key", default="", help="Tripo3D API key. Defaults to TRIPO_API_KEY.")
     submit.add_argument("--base-url", default=DEFAULT_TRIPO_BASE_URL)
-    submit.add_argument("--multiview-task-id", default="", help="Override state tripo_multiview_task_id.")
     submit.add_argument(
         "--view-image-dir",
         default="",
@@ -146,31 +140,6 @@ def parse_args() -> argparse.Namespace:
         help="Target output face count for Tripo3D. Use 0 to omit the API parameter.",
     )
     submit.add_argument("--texture-alignment", default="", choices=("", "original_image", "geometry"))
-
-    multiview = subparsers.add_parser(
-        "generate-multiview",
-        help="Generate front/left/back/right reference images from one Tripo3D image input.",
-    )
-    multiview.add_argument("--sample-id", required=True)
-    multiview.add_argument("--api-key", default="", help="Tripo3D API key. Defaults to TRIPO_API_KEY.")
-    multiview.add_argument("--base-url", default=DEFAULT_TRIPO_BASE_URL)
-    multiview.add_argument("--image-url", default="", help="Public image URL. Overrides state reference URL.")
-    multiview.add_argument("--image-file", default="", help="Local image file. Uploaded before task submission.")
-    multiview.add_argument("--interval", type=float, default=5.0)
-    multiview.add_argument("--timeout", type=float, default=600.0)
-    multiview.add_argument("--no-download", action="store_true")
-
-    poll_multiview = subparsers.add_parser(
-        "poll-multiview",
-        help="Poll an existing Tripo3D multiview task and download the returned view images.",
-    )
-    poll_multiview.add_argument("--sample-id", required=True)
-    poll_multiview.add_argument("--api-key", default="", help="Tripo3D API key. Defaults to TRIPO_API_KEY.")
-    poll_multiview.add_argument("--base-url", default=DEFAULT_TRIPO_BASE_URL)
-    poll_multiview.add_argument("--task-id", default="", help="Override state tripo_multiview_task_id.")
-    poll_multiview.add_argument("--interval", type=float, default=5.0)
-    poll_multiview.add_argument("--timeout", type=float, default=600.0)
-    poll_multiview.add_argument("--no-download", action="store_true")
 
     poll = subparsers.add_parser("poll-tripo", help="Poll Tripo3D task and download model artifacts on success.")
     poll.add_argument("--sample-id", required=True)
@@ -534,32 +503,6 @@ def download_named_url(url: str, output: Path) -> Path:
     return output
 
 
-def image_extension_from_url(url: str) -> str:
-    extension = Path(urllib.parse.urlparse(url).path).suffix.lower()
-    if extension in {".png", ".jpg", ".jpeg", ".webp"}:
-        return extension
-    return ".png"
-
-
-def multiview_urls(task_response: dict[str, Any]) -> dict[str, str]:
-    data = response_data(task_response)
-    output = data.get("output", {})
-    if not isinstance(output, dict):
-        output = {}
-    candidate = output.get("generate_multiview_image") or data.get("generate_multiview_image")
-    if not isinstance(candidate, dict):
-        candidate = output
-
-    urls: dict[str, str] = {}
-    for view in ("front", "left", "back", "right"):
-        value = candidate.get(f"{view}_view_url")
-        if isinstance(value, str) and value.startswith(("http://", "https://")):
-            urls[view] = value
-    if len(urls) != 4:
-        raise RuntimeError(f"Task response did not include all multiview image URLs: {task_response}")
-    return urls
-
-
 def reference_images_from_dir(directory: Path) -> dict[str, str]:
     images: dict[str, str] = {}
     for view in REFERENCE_VIEWS:
@@ -583,8 +526,7 @@ def reference_images_for_submit(state: dict[str, Any], view_image_dir: str) -> d
     images = state.get("openai_reference_images")
     if not isinstance(images, dict):
         raise RuntimeError(
-            "No OpenAI reference images found in state. Run generate-reference, pass --view-image-dir, "
-            "or use --multiview-task-id."
+            "No OpenAI reference images found in state. Run generate-reference or pass --view-image-dir."
         )
     missing = [view for view in REFERENCE_VIEWS if not images.get(view)]
     if missing:
@@ -829,7 +771,6 @@ def command_run_batch(args: argparse.Namespace) -> None:
                     sample_id=sample_id,
                     api_key=args.tripo_api_key,
                     base_url=args.tripo_base_url,
-                    multiview_task_id="",
                     view_image_dir="",
                     model_version=args.model_version,
                     texture=args.texture,
@@ -973,32 +914,15 @@ def command_generate_reference(args: argparse.Namespace) -> None:
         "views": views,
         "created_at": int(time.time()),
     }
-    if images.get("front"):
-        state["reference_image"] = images["front"]
     state["reference_status"] = "openai_generated"
     state["status"] = "openai_reference_generated"
     save_state(args.work_root, args.sample_id, state)
-
-
-def command_reference_placeholder(args: argparse.Namespace) -> None:
-    state = load_state(args.work_root, args.sample_id)
-    directory = sample_dir(args.work_root, args.sample_id)
-    (directory / "reference_prompt.txt").write_text(state["prompt"] + "\n", encoding="utf-8")
-    if args.reference_image:
-        state["reference_image"] = str(Path(args.reference_image).expanduser().resolve())
-    if args.reference_image_url:
-        state["reference_image_url"] = args.reference_image_url
-    state["reference_status"] = "placeholder"
-    state["status"] = "reference_placeholder_recorded"
-    save_state(args.work_root, args.sample_id, state)
-    print("Recorded placeholder reference step.")
 
 
 def command_submit_tripo(args: argparse.Namespace) -> None:
     state = load_state(args.work_root, args.sample_id)
     key = api_key(args.api_key)
     base_url = args.base_url.rstrip("/")
-    multiview_task_id = args.multiview_task_id or state.get("tripo_multiview_task_id", "")
 
     payload: dict[str, Any] = {
         "type": "multiview_to_model",
@@ -1007,17 +931,12 @@ def command_submit_tripo(args: argparse.Namespace) -> None:
         "pbr": args.pbr,
         "quad": args.quad,
     }
-    if multiview_task_id:
-        payload["original_task_id"] = multiview_task_id
-        state["tripo_model_source"] = "tripo_multiview_task"
-        state["tripo_model_multiview_task_id"] = multiview_task_id
-    else:
-        reference_images = reference_images_for_submit(state, args.view_image_dir)
-        files, uploads = tripo_file_payloads_from_reference_images(base_url, key, reference_images)
-        payload["files"] = files
-        state["tripo_model_source"] = "openai_reference_views"
-        state["tripo_model_reference_images"] = reference_images
-        state["tripo_model_reference_uploads"] = uploads
+    reference_images = reference_images_for_submit(state, args.view_image_dir)
+    files, uploads = tripo_file_payloads_from_reference_images(base_url, key, reference_images)
+    payload["files"] = files
+    state["tripo_model_source"] = "openai_reference_views"
+    state["tripo_model_reference_images"] = reference_images
+    state["tripo_model_reference_uploads"] = uploads
     if args.geometry_quality:
         payload["geometry_quality"] = args.geometry_quality
     if args.face_limit > 0:
@@ -1033,91 +952,9 @@ def command_submit_tripo(args: argparse.Namespace) -> None:
     state["tripo_task_payload"] = payload
     state["tripo_task_response"] = response
     state["tripo_task_id"] = task_id
-    state["status"] = "tripo_multiview_model_submitted"
+    state["status"] = "tripo_model_submitted"
     save_state(args.work_root, args.sample_id, state)
     print(f"Submitted Tripo multiview-to-model task: {task_id}")
-
-
-def command_generate_multiview(args: argparse.Namespace) -> None:
-    state = load_state(args.work_root, args.sample_id)
-    key = api_key(args.api_key)
-    base_url = args.base_url.rstrip("/")
-    image_url = args.image_url or state.get("reference_image_url", "")
-    file_token = ""
-    image_file = args.image_file or state.get("reference_image", "")
-    if not image_url and image_file:
-        upload_response = upload_file(base_url, key, Path(image_file).expanduser().resolve())
-        state["tripo_multiview_upload_response"] = upload_response
-        file_token = extract_token(upload_response)
-        state["tripo_multiview_file_token"] = file_token
-    if not image_url and not file_token:
-        raise RuntimeError("generate-multiview needs --image-url, --image-file, or a state reference image/url.")
-
-    payload: dict[str, Any] = {"type": "generate_multiview_image"}
-    if image_url:
-        payload["file"] = {"type": "image", "url": image_url}
-    else:
-        payload["file"] = {"type": "image", "file_token": file_token}
-
-    response = request_json("POST", f"{base_url}/task", key=key, payload=payload)
-    data = response_data(response)
-    task_id = data.get("task_id") or data.get("id")
-    if not task_id:
-        raise RuntimeError(f"Task creation response did not include task_id: {response}")
-
-    state["tripo_multiview_payload"] = payload
-    state["tripo_multiview_task_response"] = response
-    state["tripo_multiview_task_id"] = task_id
-    state["status"] = "tripo_multiview_submitted"
-    save_state(args.work_root, args.sample_id, state)
-    print(f"Submitted Tripo multiview task: {task_id}")
-
-    result = wait_for_task(base_url, key, str(task_id), args.interval, args.timeout)
-    state["tripo_multiview_result_response"] = result
-    state["status"] = "tripo_multiview_completed"
-    urls = multiview_urls(result)
-    state["tripo_multiview_urls"] = urls
-    save_state(args.work_root, args.sample_id, state)
-
-    if not args.no_download:
-        directory = sample_dir(args.work_root, args.sample_id) / "multiview"
-        downloaded: dict[str, str] = {}
-        for view, url in urls.items():
-            output = directory / f"{view}{image_extension_from_url(url)}"
-            downloaded[view] = str(download_named_url(url, output))
-        state["tripo_multiview_images"] = downloaded
-        state["status"] = "tripo_multiview_downloaded"
-        print(f"Downloaded multiview images: {directory}")
-
-    save_state(args.work_root, args.sample_id, state)
-
-
-def command_poll_multiview(args: argparse.Namespace) -> None:
-    state = load_state(args.work_root, args.sample_id)
-    task_id = args.task_id or state.get("tripo_multiview_task_id")
-    if not task_id:
-        raise RuntimeError("No tripo_multiview_task_id in state. Run generate-multiview first or pass --task-id.")
-    key = api_key(args.api_key)
-    base_url = args.base_url.rstrip("/")
-
-    result = wait_for_task(base_url, key, str(task_id), args.interval, args.timeout)
-    state["tripo_multiview_task_id"] = str(task_id)
-    state["tripo_multiview_result_response"] = result
-    state["status"] = "tripo_multiview_completed"
-    urls = multiview_urls(result)
-    state["tripo_multiview_urls"] = urls
-    save_state(args.work_root, args.sample_id, state)
-
-    if not args.no_download:
-        directory = sample_dir(args.work_root, args.sample_id) / "multiview"
-        downloaded: dict[str, str] = {}
-        for view, url in urls.items():
-            output = directory / f"{view}{image_extension_from_url(url)}"
-            downloaded[view] = str(download_named_url(url, output))
-        state["tripo_multiview_images"] = downloaded
-        state["status"] = "tripo_multiview_downloaded"
-        print(f"Downloaded multiview images: {directory}")
-        save_state(args.work_root, args.sample_id, state)
 
 
 def command_poll_tripo(args: argparse.Namespace) -> None:
@@ -1292,10 +1129,7 @@ def main() -> None:
         "init-batch": command_init_batch,
         "run-batch": command_run_batch,
         "generate-reference": command_generate_reference,
-        "reference-placeholder": command_reference_placeholder,
         "submit-tripo": command_submit_tripo,
-        "generate-multiview": command_generate_multiview,
-        "poll-multiview": command_poll_multiview,
         "poll-tripo": command_poll_tripo,
         "prepare-label-work": command_prepare_label_work,
         "export-verified": command_export_verified,

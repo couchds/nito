@@ -1267,6 +1267,12 @@ textarea:focus {
     #111d1a;
 }
 
+.three-canvas-host {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+
 .three-canvas-host,
 .three-canvas-host canvas {
   display: block;
@@ -1274,9 +1280,14 @@ textarea:focus {
   height: 100%;
 }
 
+.three-canvas-host canvas {
+  background: #111d1a;
+}
+
 .three-poster {
   position: absolute;
   inset: 0;
+  z-index: 2;
   width: 100%;
   height: 100%;
   object-fit: contain;
@@ -1293,6 +1304,7 @@ textarea:focus {
 
 .viewer-status {
   position: absolute;
+  z-index: 4;
   left: 12px;
   bottom: 12px;
   max-width: min(460px, calc(100% - 24px));
@@ -1309,6 +1321,7 @@ textarea:focus {
 
 .axis-gizmo {
   position: absolute;
+  z-index: 4;
   right: 12px;
   bottom: 12px;
   display: grid;

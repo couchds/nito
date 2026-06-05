@@ -190,7 +190,7 @@ $sampleId = "paste_created_sample_id_here"
 
 `generate-reference` calls OpenAI once for each requested view and stores `front`, `left`, `right`, and `back` images under the sample's `reference/` directory. By default it uses the catalog image settings, currently `gpt-image-2`, `1024x1024`, `medium`, opaque PNG output.
 
-`submit-tripo` now prefers generated OpenAI view images when no Tripo multiview task ID is present. It uploads the local images to Tripo3D and submits `multiview_to_model` in Tripo's required order: front, left, back, right. The `--face-limit` value can be randomized by callers; values from 3000 to 8000 are the intended training range.
+`submit-tripo` uploads the generated OpenAI view images to Tripo3D and submits `multiview_to_model` in Tripo's required order: front, left, back, right. The `--face-limit` value can be randomized by callers; values from 3000 to 8000 are the intended training range.
 
 For local batch generation, use `run-batch`. It creates `N` catalog-backed samples, generates OpenAI reference views, submits each model to Tripo3D with a random `--face-limit` between 3000 and 8000, polls/downloads the result, and writes a batch summary under `data/automated_training/batch_runs/`.
 
@@ -209,11 +209,9 @@ Start Nito when you want a dashboard over the same batch runner:
 .\.venv\Scripts\python.exe scripts\qwalk_ui_server.py
 ```
 
-Then open `http://127.0.0.1:8765`. Nito treats batch summaries as candidate training sets, shows the samples contained in each batch, and still lets a sample appear in multiple batches because membership is computed from the saved batch summaries. Use the Create page to create a prompt-backed sample directly, storing the original prompt plus generated front/left/right/back OpenAI prompts in that sample's workflow state. Prompted samples require Body plan and can optionally carry Armor and Variant tags; `animal_type` defaults to `unknown` for prompted samples. The same page can also launch catalog-backed `run-batch` jobs. The Samples page shows each sample's prompt, labels, reference images, Tripo multiview images, Blender review renders, and downloaded GLB/GLTF model when those artifacts exist.
+Then open `http://127.0.0.1:8765`. Nito treats batch summaries as candidate training sets, shows the samples contained in each batch, and still lets a sample appear in multiple batches because membership is computed from the saved batch summaries. Use the Create page to create a prompt-backed sample directly, storing the original prompt plus generated front/left/right/back OpenAI prompts in that sample's workflow state. Prompted samples require Body plan and can optionally carry Armor and Variant tags; `animal_type` defaults to `unknown` for prompted samples. The same page can also launch catalog-backed `run-batch` jobs. The Samples page shows each sample's prompt, labels, reference images, Blender review renders, and downloaded GLB/GLTF model when those artifacts exist.
 
-The older Tripo-generated multiview path is still available for experiments. `generate-multiview` submits Tripo3D's `generate_multiview_image` task, then stores `front`, `left`, `back`, and `right` images under the sample's `multiview/` directory. Downloading those task-result images is only local artifact retrieval; the Tripo generation request itself is the credit-consuming step.
-If image download fails after task completion, rerun `poll-multiview --sample-id <id>` to query the existing task and retry the local downloads without submitting another generation.
-Pass `--multiview-task-id` to `submit-tripo` to use a previously generated Tripo multiview task instead of OpenAI view images.
+Tripo submission uses the saved OpenAI reference images directly. `submit-tripo` uploads the local `front`, `left`, `right`, and `back` files, sends them to Tripo in the required `front`, `left`, `back`, `right` order, and stores the returned model task id in the sample workflow state.
 
 Blender label-work files are normalized to a canonical frame before guide fitting: +Z is up, +Y points from tail toward head, the mesh is centered on the origin, and the lowest point rests on Z=0. If the generated model imports with a different head-to-tail axis than the reference image implied, rerun only the Blender label/review stage with `--mesh-forward-axis` set to the imported model's current tail-to-head axis:
 

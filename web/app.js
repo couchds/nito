@@ -374,7 +374,6 @@ function sampleCard(sample, options = {}) {
             ${sample.model?.url ? tag("model") : ""}
             ${!sample.model?.url && sample.model?.remote_url ? tag("remote model") : ""}
             ${Object.keys(sample.reference_images || {}).length ? tag("reference") : ""}
-            ${Object.keys(sample.multiview_images || {}).length ? tag("multiview") : ""}
             ${Object.keys(sample.review_images || {}).length ? tag("review") : ""}
           </div>
           <button type="button" data-sample-id="${escapeHtml(sample.sample_id)}">${buttonLabel}</button>
@@ -758,9 +757,7 @@ function sampleDetailKey(sample) {
     label_work_blend: sample.label_work_blend,
     batches: sample.batches || [],
     model: sample.model || {},
-    source_images: sample.source_images || {},
     reference_images: sample.reference_images || {},
-    multiview_images: sample.multiview_images || {},
     review_images: sample.review_images || {},
     openai_reference_prompts: sample.openai_reference_prompts || {},
     ui_job: uiJob,
@@ -803,9 +800,7 @@ function renderSampleDetail() {
     </div>
     ${sampleActionPanel(sample)}
     ${modelPanel(sample)}
-    ${gallery("Source References", sample.source_images, ["reference"])}
     ${gallery("OpenAI References", sample.reference_images, ["front", "left", "right", "back"])}
-    ${gallery("Tripo Multiview", sample.multiview_images, ["front", "left", "right", "back"])}
     ${gallery("Blender Review Renders", sample.review_images, ["front", "left", "right", "rear", "top", "quarter"])}
     ${promptPanel(sample)}
   `;

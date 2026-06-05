@@ -19,6 +19,8 @@ class NitoThreeViewport {
     this.model = null;
     this.modelMaterials = [];
     this.frame = null;
+    this.meshCount = 0;
+    this.boundsHelper = null;
     this.disposed = false;
     this.wireframe = false;
 
@@ -34,8 +36,10 @@ class NitoThreeViewport {
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.05;
+    this.renderer.setClearColor(0x111d1a, 1);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     this.renderer.setSize(1, 1);
+    this.renderer.domElement.className = "three-canvas";
     this.host.appendChild(this.renderer.domElement);
 
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
@@ -60,7 +64,7 @@ class NitoThreeViewport {
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(this.host);
     this.resize();
-    this.restoreCamera();
+    this.resetView();
     this.animate();
     this.load();
   }
@@ -98,6 +102,8 @@ class NitoThreeViewport {
         button.classList.toggle("is-active", this.controls.autoRotate);
       }
     });
+
+    this.controls.addEventListener("end", () => this.rememberCamera());
   }
 
   async load() {
@@ -114,7 +120,6 @@ class NitoThreeViewport {
         this.setStatus(index ? "Trying local proxy" : "Loading GLB");
         const gltf = await this.loadGltf(src, timeoutMs, (message) => this.setStatus(message));
         this.setModel(gltf.scene);
-        this.setStatus("Orbit, pan, and zoom ready");
         this.poster?.classList.add("is-hidden");
         return;
       } catch (error) {
@@ -159,15 +164,40 @@ class NitoThreeViewport {
       this.scene.remove(this.model);
       this.disposeObject(this.model);
     }
+    if (this.boundsHelper) {
+      this.scene.remove(this.boundsHelper);
+      this.boundsHelper.geometry?.dispose?.();
+      this.boundsHelper.material?.dispose?.();
+      this.boundsHelper = null;
+    }
 
-    this.model = model;
+    const sourceBox = new THREE.Box3().setFromObject(model);
+    if (sourceBox.isEmpty()) {
+      this.setStatus("GLB loaded, but no visible mesh bounds were found");
+      return;
+    }
+
+    const sourceCenter = sourceBox.getCenter(new THREE.Vector3());
+    const sourceSize = sourceBox.getSize(new THREE.Vector3());
+    const maxDimension = Math.max(sourceSize.x, sourceSize.y, sourceSize.z) || 1;
+    const normalizedRoot = new THREE.Group();
+    normalizedRoot.name = "NitoNormalizedModel";
+    normalizedRoot.scale.setScalar(3.2 / maxDimension);
+    model.position.sub(sourceCenter);
+    normalizedRoot.add(model);
+
+    this.model = normalizedRoot;
     this.modelMaterials = [];
-    this.scene.add(model);
+    this.meshCount = 0;
+    this.scene.add(normalizedRoot);
 
-    model.traverse((child) => {
+    normalizedRoot.updateMatrixWorld(true);
+    normalizedRoot.traverse((child) => {
       if (child.isMesh) {
+        this.meshCount += 1;
         child.castShadow = true;
         child.receiveShadow = true;
+        child.material = this.createVisibleMaterial(child.material);
         const materials = Array.isArray(child.material) ? child.material : [child.material];
         materials.filter(Boolean).forEach((material) => {
           this.modelMaterials.push(material);
@@ -176,27 +206,36 @@ class NitoThreeViewport {
       }
     });
 
-    const box = new THREE.Box3().setFromObject(model);
-    const center = box.getCenter(new THREE.Vector3());
-    model.position.sub(center);
-
-    const centeredBox = new THREE.Box3().setFromObject(model);
-    const size = centeredBox.getSize(new THREE.Vector3());
-    const maxDimension = Math.max(size.x, size.y, size.z) || 1;
-    const scale = 3.2 / maxDimension;
-    model.scale.setScalar(scale);
-
-    const framedBox = new THREE.Box3().setFromObject(model);
+    const framedBox = new THREE.Box3().setFromObject(normalizedRoot);
     this.grid.position.y = framedBox.min.y;
     this.axes.position.set(framedBox.min.x, framedBox.min.y, framedBox.min.z);
+    this.boundsHelper = new THREE.Box3Helper(framedBox, 0x79f2df);
+    this.boundsHelper.material.transparent = true;
+    this.boundsHelper.material.opacity = 0.55;
+    this.scene.add(this.boundsHelper);
     this.frame = {
       box: framedBox,
       center: framedBox.getCenter(new THREE.Vector3()),
       radius: Math.max(framedBox.getSize(new THREE.Vector3()).length() * 0.5, 1),
     };
-    if (!cameraMemory.has(this.sampleId)) {
-      this.resetView();
-    }
+
+    this.resetView();
+    this.setStatus(`Orbit, pan, and zoom ready (${this.meshCount} mesh${this.meshCount === 1 ? "" : "es"})`);
+  }
+
+  createVisibleMaterial(originalMaterial) {
+    const source = Array.isArray(originalMaterial) ? originalMaterial[0] : originalMaterial;
+    const material = new THREE.MeshStandardMaterial({
+      color: new THREE.Color(0xdce8e3),
+      metalness: 0,
+      roughness: 0.82,
+      side: THREE.DoubleSide,
+      transparent: false,
+      opacity: 1,
+    });
+    material.name = source?.name ? `${source.name}_nito_visible` : "nito_visible_material";
+    material.wireframe = this.wireframe;
+    return material;
   }
 
   resetView() {
@@ -220,9 +259,15 @@ class NitoThreeViewport {
   restoreCamera() {
     const saved = cameraMemory.get(this.sampleId);
     if (!saved) {
-      this.camera.position.set(3, 2, 4);
-      this.controls.target.set(0, 0, 0);
-      return;
+      return false;
+    }
+    if (this.frame) {
+      const savedTarget = new THREE.Vector3().fromArray(saved.target);
+      const maxReasonableOffset = this.frame.radius * 4;
+      if (savedTarget.distanceTo(this.frame.center) > maxReasonableOffset) {
+        cameraMemory.delete(this.sampleId);
+        return false;
+      }
     }
     this.camera.position.fromArray(saved.position);
     this.controls.target.fromArray(saved.target);
@@ -230,9 +275,11 @@ class NitoThreeViewport {
     this.camera.far = saved.far;
     this.camera.updateProjectionMatrix();
     this.controls.update();
+    return true;
   }
 
   rememberCamera() {
+    if (!this.frame) return;
     cameraMemory.set(this.sampleId, {
       position: this.camera.position.toArray(),
       target: this.controls.target.toArray(),
@@ -274,7 +321,6 @@ class NitoThreeViewport {
     }
     this.controls.update();
     this.renderer.render(this.scene, this.camera);
-    this.rememberCamera();
     requestAnimationFrame(() => this.animate());
   }
 

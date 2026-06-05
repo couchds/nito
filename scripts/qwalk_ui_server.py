@@ -68,6 +68,8 @@ LEGACY_BODY_PLAN_ALIASES = {
 
 mimetypes.add_type("model/gltf-binary", ".glb")
 mimetypes.add_type("model/gltf+json", ".gltf")
+mimetypes.add_type("text/javascript", ".js")
+mimetypes.add_type("text/javascript", ".mjs")
 
 
 def workflow_python_executable() -> str:
@@ -411,9 +413,7 @@ class WorkflowStore:
             if not state:
                 continue
             sample_id = state.get("sample_id") or state_path.parent.name
-            source_images = self.image_map(state.get("reference_image"), "reference")
             reference_images = self.image_map(state.get("openai_reference_images"), "reference")
-            multiview_images = self.image_map(state.get("tripo_multiview_images"), "multiview")
             review_images = self.review_images(state.get("review_dir"))
             model_file = state.get("downloaded_model", "")
             model_url = self.artifact_url(model_file)
@@ -443,13 +443,10 @@ class WorkflowStore:
                     "face_limit": (state.get("batch_runner") or {}).get("face_limit")
                     or (state.get("tripo_task_payload") or {}).get("face_limit"),
                     "tripo_task_id": state.get("tripo_task_id", ""),
-                    "tripo_multiview_task_id": state.get("tripo_multiview_task_id", ""),
                     "batches": sample_batches.get(sample_id, []),
-                    "source_images": source_images,
                     "reference_images": reference_images,
-                    "multiview_images": multiview_images,
                     "review_images": review_images,
-                    "thumbnail_url": self.thumbnail_url(state, reference_images, multiview_images, review_images),
+                    "thumbnail_url": self.thumbnail_url(state, reference_images, review_images),
                     "model": {
                         "file": model_file,
                         "name": Path(model_file).name if model_file else "",
@@ -618,10 +615,9 @@ class WorkflowStore:
         self,
         state: dict[str, Any],
         reference_images: dict[str, str],
-        multiview_images: dict[str, str],
         review_images: dict[str, str],
     ) -> str:
-        for images in (review_images, multiview_images, reference_images):
+        for images in (review_images, reference_images):
             for key in ("quarter", "front", "reference"):
                 if images.get(key):
                     return images[key]
@@ -920,7 +916,7 @@ class WorkflowStore:
         if state.get("downloaded_model"):
             return "model_downloaded"
         if state.get("tripo_task_id"):
-            return "tripo_multiview_model_submitted"
+            return "tripo_model_submitted"
         if isinstance(reference_images, dict) and all(reference_images.get(view) for view in REFERENCE_ORDER):
             return "openai_reference_generated"
         return "initialized"
