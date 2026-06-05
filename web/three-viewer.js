@@ -20,25 +20,25 @@ class NitoThreeViewport {
     this.modelMaterials = [];
     this.frame = null;
     this.meshCount = 0;
-    this.boundsHelper = null;
     this.disposed = false;
     this.wireframe = false;
 
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0xf3f8f6);
+    this.scene.background = new THREE.Color(0x143c35);
 
     this.camera = new THREE.PerspectiveCamera(45, 1, 0.01, 1000);
     this.renderer = new THREE.WebGLRenderer({
       antialias: true,
       alpha: false,
       powerPreference: "high-performance",
+      preserveDrawingBuffer: true,
     });
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.05;
     this.renderer.setClearColor(0x111d1a, 1);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-    this.renderer.setSize(1, 1);
+    this.renderer.setSize(1, 1, false);
     this.renderer.domElement.className = "three-canvas";
     this.host.appendChild(this.renderer.domElement);
 
@@ -164,12 +164,6 @@ class NitoThreeViewport {
       this.scene.remove(this.model);
       this.disposeObject(this.model);
     }
-    if (this.boundsHelper) {
-      this.scene.remove(this.boundsHelper);
-      this.boundsHelper.geometry?.dispose?.();
-      this.boundsHelper.material?.dispose?.();
-      this.boundsHelper = null;
-    }
 
     const sourceBox = new THREE.Box3().setFromObject(model);
     if (sourceBox.isEmpty()) {
@@ -196,7 +190,9 @@ class NitoThreeViewport {
       if (child.isMesh) {
         this.meshCount += 1;
         child.castShadow = true;
+        child.frustumCulled = false;
         child.receiveShadow = true;
+        child.renderOrder = 2;
         child.material = this.createVisibleMaterial(child.material);
         const materials = Array.isArray(child.material) ? child.material : [child.material];
         materials.filter(Boolean).forEach((material) => {
@@ -209,10 +205,6 @@ class NitoThreeViewport {
     const framedBox = new THREE.Box3().setFromObject(normalizedRoot);
     this.grid.position.y = framedBox.min.y;
     this.axes.position.set(framedBox.min.x, framedBox.min.y, framedBox.min.z);
-    this.boundsHelper = new THREE.Box3Helper(framedBox, 0x79f2df);
-    this.boundsHelper.material.transparent = true;
-    this.boundsHelper.material.opacity = 0.55;
-    this.scene.add(this.boundsHelper);
     this.frame = {
       box: framedBox,
       center: framedBox.getCenter(new THREE.Vector3()),
@@ -225,13 +217,12 @@ class NitoThreeViewport {
 
   createVisibleMaterial(originalMaterial) {
     const source = Array.isArray(originalMaterial) ? originalMaterial[0] : originalMaterial;
-    const material = new THREE.MeshStandardMaterial({
+    const material = new THREE.MeshBasicMaterial({
       color: new THREE.Color(0xdce8e3),
-      metalness: 0,
-      roughness: 0.82,
       side: THREE.DoubleSide,
       transparent: false,
       opacity: 1,
+      depthTest: true,
     });
     material.name = source?.name ? `${source.name}_nito_visible` : "nito_visible_material";
     material.wireframe = this.wireframe;
@@ -310,7 +301,7 @@ class NitoThreeViewport {
     const height = Math.max(1, Math.floor(bounds.height));
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
-    this.renderer.setSize(width, height, false);
+    this.renderer.setSize(width, height, true);
   }
 
   animate() {
