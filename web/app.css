@@ -159,6 +159,52 @@ textarea:focus {
   accent-color: var(--teal);
 }
 
+.tag-fieldset {
+  margin: 14px 0 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.tag-fieldset legend {
+  padding: 0 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.checkbox-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.check-chip {
+  display: inline-flex;
+  grid-template-columns: none;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.check-chip input {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--teal);
+}
+
+.compact-empty {
+  padding: 0;
+  margin: 0;
+}
+
 .primary-action {
   width: 100%;
   min-height: 42px;

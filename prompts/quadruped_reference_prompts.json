@@ -16,11 +16,47 @@
     "right": "right side orthographic profile, animal facing toward the viewer's right",
     "back": "back orthographic view, animal facing directly away from the camera"
   },
+  "label_schema": {
+    "animal_type": [
+      "bear",
+      "cat",
+      "deer",
+      "dog",
+      "frog",
+      "lizard",
+      "otter",
+      "rabbit",
+      "ram",
+      "turtle",
+      "wolf"
+    ],
+    "body_plan": [
+      "medium_quadruped",
+      "stocky_quadruped",
+      "long_legged_ungulate",
+      "low_reptile",
+      "shell_reptile",
+      "long_body_quadruped",
+      "hind_leg_dominant"
+    ],
+    "variant_tags": [
+      "armored",
+      "unarmored",
+      "horns",
+      "shell",
+      "long_tail",
+      "short_tail",
+      "webbed_feet",
+      "hooves"
+    ]
+  },
   "specs": [
     {
       "id": "dog_light_armor",
       "animal_type": "dog",
-      "morphology_type": "canid",
+      "morphology_type": "medium_quadruped",
+      "body_plan": "medium_quadruped",
+      "variant_tags": ["armored", "long_tail"],
       "armor_state": "armored",
       "mesh_forward_axis": "POS_Y",
       "label_profile": "MEDIUM",
@@ -30,7 +66,9 @@
     {
       "id": "cat_unarmored",
       "animal_type": "cat",
-      "morphology_type": "feline",
+      "morphology_type": "medium_quadruped",
+      "body_plan": "medium_quadruped",
+      "variant_tags": ["unarmored", "long_tail"],
       "armor_state": "unarmored",
       "mesh_forward_axis": "POS_Y",
       "label_profile": "MEDIUM",
@@ -40,7 +78,9 @@
     {
       "id": "cat_scout_armor",
       "animal_type": "cat",
-      "morphology_type": "feline",
+      "morphology_type": "medium_quadruped",
+      "body_plan": "medium_quadruped",
+      "variant_tags": ["armored", "long_tail"],
       "armor_state": "armored",
       "mesh_forward_axis": "POS_Y",
       "label_profile": "MEDIUM",
@@ -50,7 +90,9 @@
     {
       "id": "frog_unarmored",
       "animal_type": "frog",
-      "morphology_type": "amphibian",
+      "morphology_type": "hind_leg_dominant",
+      "body_plan": "hind_leg_dominant",
+      "variant_tags": ["unarmored", "webbed_feet"],
       "armor_state": "unarmored",
       "mesh_forward_axis": "POS_Y",
       "label_profile": "STOCKY",
@@ -60,7 +102,9 @@
     {
       "id": "ram_plate_armor",
       "animal_type": "ram",
-      "morphology_type": "ungulate",
+      "morphology_type": "long_legged_ungulate",
+      "body_plan": "long_legged_ungulate",
+      "variant_tags": ["armored", "horns", "hooves"],
       "armor_state": "armored",
       "mesh_forward_axis": "POS_Y",
       "label_profile": "STOCKY",
@@ -70,7 +114,9 @@
     {
       "id": "rabbit_unarmored",
       "animal_type": "rabbit",
-      "morphology_type": "lagomorph",
+      "morphology_type": "hind_leg_dominant",
+      "body_plan": "hind_leg_dominant",
+      "variant_tags": ["unarmored", "short_tail"],
       "armor_state": "unarmored",
       "mesh_forward_axis": "POS_Y",
       "label_profile": "STOCKY",
@@ -80,7 +126,9 @@
     {
       "id": "turtle_unarmored",
       "animal_type": "turtle",
-      "morphology_type": "reptile_shell",
+      "morphology_type": "shell_reptile",
+      "body_plan": "shell_reptile",
+      "variant_tags": ["unarmored", "shell", "short_tail"],
       "armor_state": "unarmored",
       "mesh_forward_axis": "POS_Y",
       "label_profile": "STOCKY",
@@ -90,7 +138,9 @@
     {
       "id": "deer_unarmored",
       "animal_type": "deer",
-      "morphology_type": "ungulate",
+      "morphology_type": "long_legged_ungulate",
+      "body_plan": "long_legged_ungulate",
+      "variant_tags": ["unarmored", "horns", "hooves", "short_tail"],
       "armor_state": "unarmored",
       "mesh_forward_axis": "POS_Y",
       "label_profile": "HORSE",

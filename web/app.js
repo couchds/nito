@@ -15,7 +15,8 @@ const elements = {
   createSampleButton: document.querySelector("#createSampleButton"),
   runForm: document.querySelector("#runForm"),
   runButton: document.querySelector("#runButton"),
-  animalSelect: document.querySelector("#animalSelect"),
+  sampleMorphologySelect: document.querySelector("#sampleMorphologySelect"),
+  variantTagList: document.querySelector("#variantTagList"),
   batchCount: document.querySelector("#batchCount"),
   sampleCount: document.querySelector("#sampleCount"),
   jobCount: document.querySelector("#jobCount"),
@@ -38,6 +39,10 @@ function statusClass(value) {
 
 function tag(value) {
   return `<span class="tag ${statusClass(value)}">${escapeHtml(value || "unknown")}</span>`;
+}
+
+function labelText(value) {
+  return String(value || "unknown").replaceAll("_", " ");
 }
 
 function escapeHtml(value) {
@@ -82,7 +87,7 @@ function chooseSelections() {
 
 function render() {
   chooseSelections();
-  renderAnimals();
+  renderLabelSelects();
   elements.batchCount.textContent = state.batches.length;
   elements.sampleCount.textContent = state.samples.length;
   elements.jobCount.textContent = state.jobs.length;
@@ -94,16 +99,44 @@ function render() {
   renderJobs();
 }
 
-function renderAnimals() {
-  const current = elements.animalSelect.value || "all";
-  const options = ['<option value="all">All animals</option>'];
-  for (const animal of state.catalog.animals || []) {
-    options.push(`<option value="${escapeHtml(animal)}">${escapeHtml(animal)}</option>`);
+function catalogValues(fieldName) {
+  return [...new Set((state.catalog.specs || []).map((spec) => spec[fieldName]).filter(Boolean))].sort();
+}
+
+function renderSelectOptions(select, values, fallbackValue, fallbackLabel) {
+  const current = select.value || fallbackValue;
+  const options = [`<option value="${escapeHtml(fallbackValue)}">${escapeHtml(fallbackLabel)}</option>`];
+  for (const value of values) {
+    options.push(`<option value="${escapeHtml(value)}">${escapeHtml(labelText(value))}</option>`);
   }
-  elements.animalSelect.innerHTML = options.join("");
-  elements.animalSelect.value = [...elements.animalSelect.options].some((option) => option.value === current)
-    ? current
-    : "all";
+  select.innerHTML = options.join("");
+  select.value = [...select.options].some((option) => option.value === current) ? current : fallbackValue;
+}
+
+function renderLabelSelects() {
+  renderSelectOptions(elements.sampleMorphologySelect, state.catalog.body_plans || catalogValues("morphology_type"), "", "Select body plan");
+  renderVariantTags();
+}
+
+function renderVariantTags() {
+  const current = new Set(
+    [...elements.variantTagList.querySelectorAll("input[name='variantTags']:checked")].map((input) => input.value),
+  );
+  const tags = state.catalog.variant_tags || [];
+  if (!tags.length) {
+    elements.variantTagList.innerHTML = '<p class="empty compact-empty">No variant tags configured.</p>';
+    return;
+  }
+  elements.variantTagList.innerHTML = tags
+    .map(
+      (value) => `
+        <label class="check-chip">
+          <input name="variantTags" type="checkbox" value="${escapeHtml(value)}" ${current.has(value) ? "checked" : ""}>
+          <span>${escapeHtml(labelText(value))}</span>
+        </label>
+      `,
+    )
+    .join("");
 }
 
 function batchStatus(batch) {
@@ -210,10 +243,15 @@ function sampleCard(sample, options = {}) {
             <h3>${escapeHtml(sample.sample_id)}</h3>
             ${tag(sample.status)}
           </div>
-          <p>${escapeHtml(sample.animal_type)} / ${escapeHtml(sample.morphology_type)} / ${escapeHtml(sample.armor_state || "armor unspecified")}</p>
+          <p>
+            ${escapeHtml(labelText(sample.animal_type))}
+            / ${escapeHtml(labelText(sample.body_plan || sample.morphology_type))}
+            / ${escapeHtml(labelText(sample.armor_state || "armor unspecified"))}
+          </p>
           ${sample.prompt ? `<p class="prompt-snippet">${escapeHtml(sample.prompt)}</p>` : ""}
           <div class="tag-row">
             ${batches.length ? tag(`${batches.length} batches`) : tag("unbatched")}
+            ${(sample.variant_tags || []).map((value) => tag(value)).join("")}
             ${sample.face_limit ? tag(`${sample.face_limit} faces`) : ""}
             ${sample.model?.url ? tag("model") : ""}
             ${Object.keys(sample.reference_images || {}).length ? tag("reference") : ""}
@@ -319,11 +357,14 @@ function renderSampleDetail() {
       ${tag(sample.status)}
     </div>
     <p class="detail-meta">
-      ${escapeHtml(sample.animal_type)} / ${escapeHtml(sample.morphology_type)} / ${escapeHtml(sample.armor_state || "no armor label")}
+      Animal: ${escapeHtml(labelText(sample.animal_type))}
+      | Body plan: ${escapeHtml(labelText(sample.body_plan || sample.morphology_type))}
+      | Armor: ${escapeHtml(labelText(sample.armor_state || "unspecified"))}
       ${sample.face_limit ? ` | ${escapeHtml(sample.face_limit)} faces` : ""}
     </p>
     <div class="tag-row">
       ${batches.length ? batches.map((batchId) => tag(batchId)).join("") : tag("unbatched")}
+      ${(sample.variant_tags || []).map((value) => tag(value)).join("")}
     </div>
     ${modelPanel(sample)}
     ${gallery("Source References", sample.source_images, ["reference"])}
@@ -364,9 +405,10 @@ function samplePayload() {
   return {
     prompt: formData.get("prompt") || "",
     samplePrefix: formData.get("samplePrefix") || "sample",
-    animalType: formData.get("animalType") || "unknown",
-    morphologyType: formData.get("morphologyType") || formData.get("animalType") || "unknown",
+    animalType: "unknown",
+    morphologyType: formData.get("morphologyType") || "",
     armorState: formData.get("armorState") || "",
+    variantTags: formData.getAll("variantTags"),
   };
 }
 
@@ -376,8 +418,8 @@ function batchPayload() {
     count: Number(formData.get("count") || 1),
     samplePrefix: formData.get("samplePrefix") || "ui",
     seed: Number(formData.get("seed") || 0),
-    animalType: formData.get("animalType") || "all",
-    armorState: formData.get("armorState") || "all",
+    animalType: "all",
+    armorState: "all",
     faceLimitMin: Number(formData.get("faceLimitMin") || 3000),
     faceLimitMax: Number(formData.get("faceLimitMax") || 8000),
     dryRun: formData.get("dryRun") === "on",

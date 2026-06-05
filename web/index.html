@@ -96,12 +96,10 @@
                     <input id="samplePrefixInput" name="samplePrefix" type="text" value="sample">
                   </label>
                   <label>
-                    Animal label
-                    <input id="sampleAnimalInput" name="animalType" type="text" value="unknown">
-                  </label>
-                  <label>
-                    Morphology label
-                    <input id="sampleMorphologyInput" name="morphologyType" type="text" value="unknown">
+                    Body plan
+                    <select id="sampleMorphologySelect" name="morphologyType" required>
+                      <option value="">Select body plan</option>
+                    </select>
                   </label>
                   <label>
                     Armor
@@ -112,13 +110,17 @@
                     </select>
                   </label>
                 </div>
+                <fieldset class="tag-fieldset">
+                  <legend>Variant tags</legend>
+                  <div id="variantTagList" class="checkbox-grid"></div>
+                </fieldset>
                 <button id="createSampleButton" class="primary-action" type="submit">Create Sample</button>
               </section>
             </form>
 
             <form id="runForm" class="content-band">
               <section class="panel-section">
-                <h2>Create Catalog Batch</h2>
+                <h2>Create Random Catalog Batch</h2>
                 <div class="field-grid">
                   <label>
                     Count
@@ -131,20 +133,6 @@
                   <label>
                     Seed
                     <input id="seedInput" name="seed" type="number" min="0" value="0">
-                  </label>
-                  <label>
-                    Animal
-                    <select id="animalSelect" name="animalType">
-                      <option value="all">All animals</option>
-                    </select>
-                  </label>
-                  <label>
-                    Armor
-                    <select id="armorSelect" name="armorState">
-                      <option value="all">Any</option>
-                      <option value="armored">Armored</option>
-                      <option value="unarmored">Unarmored</option>
-                    </select>
                   </label>
                 </div>
               </section>

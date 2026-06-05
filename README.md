@@ -152,7 +152,7 @@ The `scripts/automated_training_workflow.py` script scaffolds the end-to-end rea
 7. Use `skills/qwalk-gold-labeler/SKILL.md` to iterate until the label is perfect.
 8. Export a verified real training label.
 
-Sample prompts live in `prompts/quadruped_reference_prompts.json`. The catalog stores animal type, morphology type, armor state, mesh axis defaults, and the per-view prompt template used for OpenAI reference generation. Generated workflow state is written under `data/automated_training/`, which is ignored by Git.
+Sample prompts live in `prompts/quadruped_reference_prompts.json`. The catalog stores body plan, optional animal type metadata, variant tags, armor state, mesh axis defaults, and the per-view prompt template used for OpenAI reference generation. Body plan is still stored as `morphology_type` in workflow and training data for compatibility with the current trainer, but conceptually it should answer "what skeleton placement family is this?" rather than "what species is this?". Generated workflow state is written under `data/automated_training/`, which is ignored by Git.
 
 ```powershell
 Copy-Item .env.example .env.local
@@ -194,7 +194,7 @@ Start the local web UI when you want a dashboard over the same batch runner:
 .\.venv\Scripts\python.exe scripts\qwalk_ui_server.py
 ```
 
-Then open `http://127.0.0.1:8765`. The UI treats batch summaries as candidate training sets, shows the samples contained in each batch, and still lets a sample appear in multiple batches because membership is computed from the saved batch summaries. Use the Create page to create a prompt-backed sample directly, storing the original prompt plus generated front/left/right/back OpenAI prompts in that sample's workflow state. The same page can also launch catalog-backed `run-batch` jobs. The Samples page shows each sample's prompt, reference images, Tripo multiview images, Blender review renders, and downloaded GLB/GLTF model when those artifacts exist.
+Then open `http://127.0.0.1:8765`. The UI treats batch summaries as candidate training sets, shows the samples contained in each batch, and still lets a sample appear in multiple batches because membership is computed from the saved batch summaries. Use the Create page to create a prompt-backed sample directly, storing the original prompt plus generated front/left/right/back OpenAI prompts in that sample's workflow state. Prompted samples require Body plan and can optionally carry Armor and Variant tags; `animal_type` defaults to `unknown` for prompted samples. The same page can also launch catalog-backed `run-batch` jobs. The Samples page shows each sample's prompt, labels, reference images, Tripo multiview images, Blender review renders, and downloaded GLB/GLTF model when those artifacts exist.
 
 The older Tripo-generated multiview path is still available for experiments. `generate-multiview` submits Tripo3D's `generate_multiview_image` task, then stores `front`, `left`, `back`, and `right` images under the sample's `multiview/` directory. Downloading those task-result images is only local artifact retrieval; the Tripo generation request itself is the credit-consuming step.
 If image download fails after task completion, rerun `poll-multiview --sample-id <id>` to query the existing task and retry the local downloads without submitting another generation.

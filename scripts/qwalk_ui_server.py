@@ -33,6 +33,14 @@ DEFAULT_VIEW_INSTRUCTIONS = {
     "right": "right side orthographic profile, animal facing toward the viewer's right",
     "back": "back orthographic view, animal facing directly away from the camera",
 }
+LEGACY_BODY_PLAN_ALIASES = {
+    "canid": "medium_quadruped",
+    "feline": "medium_quadruped",
+    "amphibian": "hind_leg_dominant",
+    "ungulate": "long_legged_ungulate",
+    "lagomorph": "hind_leg_dominant",
+    "reptile_shell": "shell_reptile",
+}
 
 
 def read_json(path: Path, default: Any) -> Any:
@@ -68,6 +76,26 @@ def safe_token(value: Any, default: str) -> str:
     return "".join(allowed)[:48] or default
 
 
+def string_list(value: Any) -> list[str]:
+    if isinstance(value, list):
+        items = value
+    elif isinstance(value, str):
+        items = value.split(",")
+    else:
+        return []
+    cleaned: list[str] = []
+    for item in items:
+        text = str(item or "").strip()
+        if text and text not in cleaned:
+            cleaned.append(text)
+    return cleaned
+
+
+def body_plan_value(state: dict[str, Any]) -> str:
+    raw = str(state.get("body_plan") or state.get("morphology_type") or "").strip()
+    return LEGACY_BODY_PLAN_ALIASES.get(raw, raw)
+
+
 class WorkflowStore:
     def __init__(self, work_root: Path, catalog_path: Path) -> None:
         self.work_root = work_root.expanduser().resolve()
@@ -77,11 +105,36 @@ class WorkflowStore:
     def catalog(self) -> dict[str, Any]:
         catalog = read_json(self.catalog_path, {})
         specs = catalog.get("specs", [])
-        animals = sorted({spec.get("animal_type", "") for spec in specs if spec.get("animal_type")})
+        label_schema = catalog.get("label_schema", {})
+        animals = sorted(
+            {
+                *string_list(label_schema.get("animal_type") if isinstance(label_schema, dict) else []),
+                *[spec.get("animal_type", "") for spec in specs if spec.get("animal_type")],
+            }
+        )
+        body_plans = sorted(
+            {
+                *string_list(label_schema.get("body_plan") if isinstance(label_schema, dict) else []),
+                *[spec.get("body_plan") or spec.get("morphology_type", "") for spec in specs if spec.get("body_plan") or spec.get("morphology_type")],
+            }
+        )
+        variant_tags = sorted(
+            {
+                *string_list(label_schema.get("variant_tags") if isinstance(label_schema, dict) else []),
+                *[
+                    tag
+                    for spec in specs
+                    for tag in string_list(spec.get("variant_tags"))
+                ],
+            }
+        )
         return {
             "path": str(self.catalog_path),
             "defaults": catalog.get("defaults", {}),
+            "label_schema": label_schema if isinstance(label_schema, dict) else {},
             "animals": animals,
+            "body_plans": body_plans,
+            "variant_tags": variant_tags,
             "specs": specs,
         }
 
@@ -109,6 +162,8 @@ class WorkflowStore:
                     "openai_reference_prompts": state.get("openai_reference_prompts", {}),
                     "animal_type": state.get("animal_type", ""),
                     "morphology_type": state.get("morphology_type", ""),
+                    "body_plan": body_plan_value(state),
+                    "variant_tags": string_list(state.get("variant_tags")),
                     "armor_state": state.get("armor_state", ""),
                     "status": state.get("status", ""),
                     "created_at": state.get("created_at", 0),
@@ -373,8 +428,13 @@ class WorkflowStore:
             raise ValueError(f"Sample already exists: {sample_id}")
 
         animal_type = str(payload.get("animalType") or "unknown").strip() or "unknown"
-        morphology_type = str(payload.get("morphologyType") or animal_type).strip() or animal_type
+        morphology_type = str(payload.get("morphologyType") or "").strip()
+        if not morphology_type or morphology_type == "unknown":
+            raise ValueError("Body plan is required.")
         armor_state = str(payload.get("armorState") or "").strip()
+        variant_tags = string_list(payload.get("variantTags"))
+        if armor_state and armor_state not in variant_tags:
+            variant_tags.insert(0, armor_state)
         label_profile = str(payload.get("labelProfile") or "AUTO").strip() or "AUTO"
         mesh_forward_axis = str(payload.get("meshForwardAxis") or "POS_Y").strip() or "POS_Y"
         now = int(time.time())
@@ -383,6 +443,8 @@ class WorkflowStore:
             "prompt": prompt,
             "animal_type": animal_type,
             "morphology_type": morphology_type,
+            "body_plan": morphology_type,
+            "variant_tags": variant_tags,
             "armor_state": armor_state,
             "mesh_forward_axis": mesh_forward_axis,
             "label_profile": label_profile,
