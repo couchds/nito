@@ -9,6 +9,15 @@ const state = {
   selectedJobId: "",
 };
 
+const legacyBodyPlanAliases = {
+  canid: "medium_quadruped",
+  feline: "medium_quadruped",
+  amphibian: "hind_leg_dominant",
+  ungulate: "long_legged_ungulate",
+  lagomorph: "hind_leg_dominant",
+  reptile_shell: "shell_reptile",
+};
+
 const elements = {
   statusLine: document.querySelector("#statusLine"),
   refreshButton: document.querySelector("#refreshButton"),
@@ -18,6 +27,7 @@ const elements = {
   runButton: document.querySelector("#runButton"),
   sampleMorphologySelect: document.querySelector("#sampleMorphologySelect"),
   bodyPlanExamples: document.querySelector("#bodyPlanExamples"),
+  bodyPlanSkeletonPreview: document.querySelector("#bodyPlanSkeletonPreview"),
   variantTagList: document.querySelector("#variantTagList"),
   batchCount: document.querySelector("#batchCount"),
   sampleCount: document.querySelector("#sampleCount"),
@@ -96,6 +106,93 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function skeletonLabelSchema() {
+  return state.catalog.label_schema || {};
+}
+
+function skeletonSchemas() {
+  return skeletonLabelSchema().skeleton_schemas || {};
+}
+
+function normalizeBodyPlan(bodyPlan) {
+  const value = String(bodyPlan || "").trim();
+  return legacyBodyPlanAliases[value] || value;
+}
+
+function skeletonSchemaIdForBodyPlan(bodyPlan) {
+  const mapping = skeletonLabelSchema().body_plan_skeleton_schema || {};
+  return mapping[normalizeBodyPlan(bodyPlan)] || "";
+}
+
+function skeletonSchemaForId(schemaId) {
+  return skeletonSchemas()[schemaId] || null;
+}
+
+function skeletonSchemaForSample(sample) {
+  const schemaId = sample?.skeleton_schema_id || skeletonSchemaIdForBodyPlan(sample?.body_plan || sample?.morphology_type || "");
+  return schemaId ? skeletonSchemaForId(schemaId) : null;
+}
+
+function skeletonBoneCount(schema) {
+  const names = new Set();
+  for (const chain of schema?.chains || []) {
+    for (const bone of chain.bones || []) {
+      names.add(bone);
+    }
+  }
+  return names.size;
+}
+
+function skeletonSchemaCard(schema, options = {}) {
+  if (!schema) {
+    return `
+      <div class="skeleton-schema-card skeleton-schema-empty">
+        <strong>No skeleton schema mapped</strong>
+        <p>Select a body plan to see the expected bone graph.</p>
+      </div>
+    `;
+  }
+  const chains = Array.isArray(schema.chains) ? schema.chains : [];
+  const visibleChains = options.compact ? chains.slice(0, 4) : chains;
+  const hiddenCount = Math.max(0, chains.length - visibleChains.length);
+  const notes = Array.isArray(schema.placement_notes) ? schema.placement_notes : [];
+  return `
+    <div class="skeleton-schema-card ${options.compact ? "is-compact" : ""}">
+      <div class="skeleton-schema-header">
+        <div>
+          <strong>${escapeHtml(schema.label || "Skeleton schema")}</strong>
+          <p>${escapeHtml(schema.summary || "Shared bone graph for this body plan.")}</p>
+        </div>
+        ${tag(`${skeletonBoneCount(schema)} bones`)}
+      </div>
+      <div class="skeleton-chain-list">
+        ${visibleChains
+          .map(
+            (chain) => `
+              <div class="skeleton-chain">
+                <span>${escapeHtml(chain.name || "Chain")}</span>
+                <code>${escapeHtml((chain.bones || []).join(" -> "))}</code>
+              </div>
+            `,
+          )
+          .join("")}
+      </div>
+      ${hiddenCount ? `<p class="field-help">+ ${hiddenCount} more chains in this schema.</p>` : ""}
+      ${
+        !options.compact && notes.length
+          ? `<ul class="skeleton-notes">${notes.map((note) => `<li>${escapeHtml(note)}</li>`).join("")}</ul>`
+          : ""
+      }
+    </div>
+  `;
+}
+
+function renderSkeletonSchemaPreview() {
+  const bodyPlan = elements.sampleMorphologySelect.value;
+  const schema = skeletonSchemaForId(skeletonSchemaIdForBodyPlan(bodyPlan));
+  elements.bodyPlanSkeletonPreview.innerHTML = skeletonSchemaCard(schema, { compact: true });
 }
 
 function sampleById(sampleId) {
@@ -221,9 +318,11 @@ function renderBodyPlanExamples() {
   const selectedExamples = examples[selected];
   if (Array.isArray(selectedExamples) && selectedExamples.length) {
     elements.bodyPlanExamples.textContent = `Examples: ${selectedExamples.slice(0, 2).join(", ")}.`;
+    renderSkeletonSchemaPreview();
     return;
   }
   elements.bodyPlanExamples.textContent = "Examples: medium quadruped (dog, cat), hind-leg dominant (frog, rabbit).";
+  renderSkeletonSchemaPreview();
 }
 
 function renderVariantTags() {
@@ -623,6 +722,7 @@ function pipelineState(sample, activeJob) {
   const hasRemoteModel = Boolean(sample.model?.remote_url);
   const hasModel = Boolean(sample.model?.url);
   const hasBlenderFile = Boolean(sample.label_work_blend);
+  const schema = skeletonSchemaForSample(sample);
   const activeStage = activePipelineStage(sample, activeJob);
   const stepState = (key, complete, ready) => {
     if (activeStage === key) return "running";
@@ -658,7 +758,11 @@ function pipelineState(sample, activeJob) {
     {
       key: "skeleton",
       title: "Skeleton",
-      detail: hasBlenderFile ? "Manual placement" : "Waiting on Blender file",
+      detail: hasBlenderFile
+        ? `${schema?.label || "Schema"} placement`
+        : schema
+          ? `${schema.label} waiting`
+          : "Waiting on Blender file",
       state: hasBlenderFile ? "manual" : "blocked",
     },
   ];
@@ -750,6 +854,7 @@ function sampleDetailKey(sample) {
     animal_type: sample.animal_type,
     body_plan: sample.body_plan,
     morphology_type: sample.morphology_type,
+    skeleton_schema_id: sample.skeleton_schema_id,
     armor_state: sample.armor_state,
     variant_tags: sample.variant_tags || [],
     face_limit: sample.face_limit,
@@ -763,6 +868,20 @@ function sampleDetailKey(sample) {
     ui_job: uiJob,
     jobs,
   });
+}
+
+function skeletonSchemaPanel(sample) {
+  const schema = skeletonSchemaForSample(sample);
+  const schemaId = sample.skeleton_schema_id || skeletonSchemaIdForBodyPlan(sample.body_plan || sample.morphology_type || "");
+  return `
+    <section class="skeleton-schema-section">
+      <div class="section-heading">
+        <h4>Skeleton Schema</h4>
+        ${schemaId ? tag(schemaId) : tag("unmapped")}
+      </div>
+      ${skeletonSchemaCard(schema)}
+    </section>
+  `;
 }
 
 function renderSampleDetail() {
@@ -798,6 +917,7 @@ function renderSampleDetail() {
       ${batches.length ? batches.map((batchId) => tag(batchId)).join("") : tag("unbatched")}
       ${(sample.variant_tags || []).map((value) => tag(value)).join("")}
     </div>
+    ${skeletonSchemaPanel(sample)}
     ${sampleActionPanel(sample)}
     ${modelPanel(sample)}
     ${gallery("OpenAI References", sample.reference_images, ["front", "left", "right", "back"])}

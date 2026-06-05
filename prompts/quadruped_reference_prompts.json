@@ -48,6 +48,81 @@
       "long_body_quadruped": ["otter", "ferret"],
       "hind_leg_dominant": ["frog", "rabbit"]
     },
+    "body_plan_skeleton_schema": {
+      "medium_quadruped": "mammal_quadruped_v1",
+      "stocky_quadruped": "mammal_quadruped_v1",
+      "long_body_quadruped": "mammal_quadruped_v1",
+      "long_legged_ungulate": "ungulate_quadruped_v1",
+      "low_reptile": "sprawling_quadruped_v1",
+      "shell_reptile": "sprawling_quadruped_v1",
+      "hind_leg_dominant": "hopper_quadruped_v1"
+    },
+    "skeleton_schemas": {
+      "mammal_quadruped_v1": {
+        "label": "Mammal quadruped",
+        "summary": "General under-body limb rig for dog, cat, bear, otter, wolf, and similar fantasy mammals.",
+        "chains": [
+          { "name": "Spine", "bones": ["root", "pelvis", "spine_01", "chest", "neck", "head"] },
+          { "name": "Tail", "bones": ["pelvis", "tail_01", "tail_02", "tail_tip"] },
+          { "name": "Front left", "bones": ["chest", "front_l_scapula", "front_l_upper", "front_l_lower", "front_l_wrist", "front_l_paw"] },
+          { "name": "Front right", "bones": ["chest", "front_r_scapula", "front_r_upper", "front_r_lower", "front_r_wrist", "front_r_paw"] },
+          { "name": "Hind left", "bones": ["pelvis", "hind_l_hip", "hind_l_upper", "hind_l_lower", "hind_l_ankle", "hind_l_paw"] },
+          { "name": "Hind right", "bones": ["pelvis", "hind_r_hip", "hind_r_upper", "hind_r_lower", "hind_r_ankle", "hind_r_paw"] }
+        ],
+        "placement_notes": [
+          "Shoulders and hips sit mostly above the paws.",
+          "Use for vertical or semi-vertical limb stance, not strongly side-splayed limbs."
+        ]
+      },
+      "ungulate_quadruped_v1": {
+        "label": "Ungulate quadruped",
+        "summary": "Long distal-limb rig for deer, horse, ram, goat, and hoofed fantasy creatures.",
+        "chains": [
+          { "name": "Spine", "bones": ["root", "pelvis", "spine_01", "chest", "neck_01", "neck_02", "head"] },
+          { "name": "Tail", "bones": ["pelvis", "tail_01", "tail_tip"] },
+          { "name": "Front left", "bones": ["chest", "front_l_scapula", "front_l_upper", "front_l_forearm", "front_l_knee", "front_l_cannon", "front_l_pastern", "front_l_hoof"] },
+          { "name": "Front right", "bones": ["chest", "front_r_scapula", "front_r_upper", "front_r_forearm", "front_r_knee", "front_r_cannon", "front_r_pastern", "front_r_hoof"] },
+          { "name": "Hind left", "bones": ["pelvis", "hind_l_hip", "hind_l_thigh", "hind_l_gaskin", "hind_l_hock", "hind_l_cannon", "hind_l_pastern", "hind_l_hoof"] },
+          { "name": "Hind right", "bones": ["pelvis", "hind_r_hip", "hind_r_thigh", "hind_r_gaskin", "hind_r_hock", "hind_r_cannon", "hind_r_pastern", "hind_r_hoof"] }
+        ],
+        "placement_notes": [
+          "Preserve the long lower-leg/cannon/pastern chain even on stylized short creatures.",
+          "Hooves are terminal contact bones rather than broad paws."
+        ]
+      },
+      "sprawling_quadruped_v1": {
+        "label": "Sprawling quadruped",
+        "summary": "Side-splayed limb rig for lizards, salamanders, crocodile-like bodies, turtles, and shell reptiles.",
+        "chains": [
+          { "name": "Spine", "bones": ["root", "pelvis", "spine_01", "spine_02", "chest", "neck", "head"] },
+          { "name": "Tail", "bones": ["pelvis", "tail_01", "tail_02", "tail_03", "tail_tip"] },
+          { "name": "Front left", "bones": ["chest", "front_l_shoulder_out", "front_l_upper_lateral", "front_l_elbow", "front_l_forearm", "front_l_wrist", "front_l_foot"] },
+          { "name": "Front right", "bones": ["chest", "front_r_shoulder_out", "front_r_upper_lateral", "front_r_elbow", "front_r_forearm", "front_r_wrist", "front_r_foot"] },
+          { "name": "Hind left", "bones": ["pelvis", "hind_l_hip_out", "hind_l_thigh_lateral", "hind_l_knee", "hind_l_shin", "hind_l_ankle", "hind_l_foot"] },
+          { "name": "Hind right", "bones": ["pelvis", "hind_r_hip_out", "hind_r_thigh_lateral", "hind_r_knee", "hind_r_shin", "hind_r_ankle", "hind_r_foot"] }
+        ],
+        "placement_notes": [
+          "Upper limb bones project laterally from the body before dropping toward the ground.",
+          "Use the same graph for shell reptiles; placement should account for limited shell deformation."
+        ]
+      },
+      "hopper_quadruped_v1": {
+        "label": "Hind-leg dominant",
+        "summary": "Compact-front, powerful-rear rig for frogs, rabbits, and fantasy hoppers.",
+        "chains": [
+          { "name": "Spine", "bones": ["root", "pelvis", "spine_01", "chest", "neck", "head"] },
+          { "name": "Tail", "bones": ["pelvis", "tail_stub"] },
+          { "name": "Front left", "bones": ["chest", "front_l_upper", "front_l_lower", "front_l_wrist", "front_l_hand"] },
+          { "name": "Front right", "bones": ["chest", "front_r_upper", "front_r_lower", "front_r_wrist", "front_r_hand"] },
+          { "name": "Hind left", "bones": ["pelvis", "hind_l_hip", "hind_l_thigh", "hind_l_knee", "hind_l_shin", "hind_l_ankle", "hind_l_long_foot", "hind_l_toe"] },
+          { "name": "Hind right", "bones": ["pelvis", "hind_r_hip", "hind_r_thigh", "hind_r_knee", "hind_r_shin", "hind_r_ankle", "hind_r_long_foot", "hind_r_toe"] }
+        ],
+        "placement_notes": [
+          "Rear chain is the primary locomotion chain and should not collapse to mammal-like proportions.",
+          "Front limbs can be short support/contact chains."
+        ]
+      }
+    },
     "variant_tags": [
       "armored",
       "unarmored",

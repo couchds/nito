@@ -34,6 +34,14 @@ DEFAULT_TRIPO_MESH_FORWARD_AXIS = "POS_X"
 MODEL_EXTENSIONS = (".glb", ".gltf", ".obj", ".fbx", ".zip")
 REFERENCE_VIEWS = ("front", "left", "right", "back")
 TRIPO_VIEW_ORDER = ("front", "left", "back", "right")
+LEGACY_BODY_PLAN_ALIASES = {
+    "canid": "medium_quadruped",
+    "feline": "medium_quadruped",
+    "amphibian": "hind_leg_dominant",
+    "ungulate": "long_legged_ungulate",
+    "lagomorph": "hind_leg_dominant",
+    "reptile_shell": "shell_reptile",
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -234,6 +242,17 @@ def load_prompt_catalog(path: str | Path) -> dict[str, Any]:
     if not isinstance(specs, list) or not specs:
         raise RuntimeError(f"Prompt catalog must contain at least one spec: {catalog_path}")
     return catalog
+
+
+def skeleton_schema_id_for_body_plan(catalog: dict[str, Any], body_plan: str) -> str:
+    label_schema = catalog.get("label_schema")
+    if not isinstance(label_schema, dict):
+        return ""
+    mapping = label_schema.get("body_plan_skeleton_schema")
+    if not isinstance(mapping, dict):
+        return ""
+    normalized_body_plan = LEGACY_BODY_PLAN_ALIASES.get(str(body_plan or "").strip(), str(body_plan or "").strip())
+    return str(mapping.get(normalized_body_plan, "") or "").strip()
 
 
 def select_prompt_spec(
@@ -636,6 +655,8 @@ def create_batch_states(
             "animal_type": spec["animal_type"],
             "morphology_type": spec["morphology_type"],
             "body_plan": spec.get("body_plan", spec["morphology_type"]),
+            "skeleton_schema_id": spec.get("skeleton_schema_id", "")
+            or skeleton_schema_id_for_body_plan(catalog, spec.get("body_plan", spec["morphology_type"])),
             "variant_tags": spec.get("variant_tags", []),
             "armor_state": spec.get("armor_state", "unarmored"),
             "mesh_forward_axis": resolved_mesh_forward_axis,
@@ -656,12 +677,14 @@ def create_batch_states(
 
 
 def command_init_sample(args: argparse.Namespace) -> None:
+    catalog = load_prompt_catalog(DEFAULT_PROMPT_CATALOG)
     state = {
         "sample_id": args.sample_id,
         "prompt": args.prompt,
         "animal_type": args.animal_type,
         "morphology_type": args.morphology_type,
         "body_plan": args.morphology_type,
+        "skeleton_schema_id": skeleton_schema_id_for_body_plan(catalog, args.morphology_type),
         "variant_tags": [],
         "mesh_forward_axis": args.mesh_forward_axis,
         "status": "initialized",

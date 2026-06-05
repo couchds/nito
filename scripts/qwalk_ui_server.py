@@ -137,6 +137,15 @@ def body_plan_value(state: dict[str, Any]) -> str:
     return LEGACY_BODY_PLAN_ALIASES.get(raw, raw)
 
 
+def skeleton_schema_id_for_body_plan(label_schema: dict[str, Any], body_plan: str) -> str:
+    mapping = label_schema.get("body_plan_skeleton_schema") if isinstance(label_schema, dict) else {}
+    if not isinstance(mapping, dict):
+        return ""
+    normalized_body_plan = LEGACY_BODY_PLAN_ALIASES.get(str(body_plan or "").strip(), str(body_plan or "").strip())
+    schema_id = mapping.get(normalized_body_plan, "")
+    return str(schema_id or "").strip()
+
+
 class JobDatabase:
     def __init__(self, path: Path, legacy_job_root: Path) -> None:
         self.path = path
@@ -370,21 +379,23 @@ class WorkflowStore:
         catalog = read_json(self.catalog_path, {})
         specs = catalog.get("specs", [])
         label_schema = catalog.get("label_schema", {})
+        if not isinstance(label_schema, dict):
+            label_schema = {}
         animals = sorted(
             {
-                *string_list(label_schema.get("animal_type") if isinstance(label_schema, dict) else []),
+                *string_list(label_schema.get("animal_type")),
                 *[spec.get("animal_type", "") for spec in specs if spec.get("animal_type")],
             }
         )
         body_plans = sorted(
             {
-                *string_list(label_schema.get("body_plan") if isinstance(label_schema, dict) else []),
+                *string_list(label_schema.get("body_plan")),
                 *[spec.get("body_plan") or spec.get("morphology_type", "") for spec in specs if spec.get("body_plan") or spec.get("morphology_type")],
             }
         )
         variant_tags = sorted(
             {
-                *string_list(label_schema.get("variant_tags") if isinstance(label_schema, dict) else []),
+                *string_list(label_schema.get("variant_tags")),
                 *[
                     tag
                     for spec in specs
@@ -395,7 +406,7 @@ class WorkflowStore:
         return {
             "path": str(self.catalog_path),
             "defaults": catalog.get("defaults", {}),
-            "label_schema": label_schema if isinstance(label_schema, dict) else {},
+            "label_schema": label_schema,
             "animals": animals,
             "body_plans": body_plans,
             "variant_tags": variant_tags,
@@ -406,6 +417,7 @@ class WorkflowStore:
         self.refresh_stale_jobs()
         samples: list[dict[str, Any]] = []
         sample_batches = self.sample_membership()
+        label_schema = self.catalog().get("label_schema", {})
         if not self.work_root.exists():
             return samples
         for state_path in sorted(self.work_root.glob("*/workflow_state.json")):
@@ -425,6 +437,11 @@ class WorkflowStore:
             status = state.get("status", "")
             if self.sample_status_is_running(status) and ui_job.get("status") == "stale":
                 status = "ui_job_stale"
+            body_plan = body_plan_value(state)
+            skeleton_schema_id = str(state.get("skeleton_schema_id") or "").strip() or skeleton_schema_id_for_body_plan(
+                label_schema,
+                body_plan,
+            )
             samples.append(
                 {
                     "sample_id": sample_id,
@@ -433,7 +450,8 @@ class WorkflowStore:
                     "openai_reference_prompts": state.get("openai_reference_prompts", {}),
                     "animal_type": state.get("animal_type", ""),
                     "morphology_type": state.get("morphology_type", ""),
-                    "body_plan": body_plan_value(state),
+                    "body_plan": body_plan,
+                    "skeleton_schema_id": skeleton_schema_id,
                     "variant_tags": string_list(state.get("variant_tags")),
                     "armor_state": state.get("armor_state", ""),
                     "status": status,
@@ -974,6 +992,7 @@ class WorkflowStore:
             variant_tags.insert(0, armor_state)
         label_profile = str(payload.get("labelProfile") or "AUTO").strip() or "AUTO"
         mesh_forward_axis = str(payload.get("meshForwardAxis") or "POS_X").strip() or "POS_X"
+        skeleton_schema_id = skeleton_schema_id_for_body_plan(self.catalog().get("label_schema", {}), morphology_type)
         now = int(time.time())
         state = {
             "sample_id": sample_id,
@@ -981,6 +1000,7 @@ class WorkflowStore:
             "animal_type": animal_type,
             "morphology_type": morphology_type,
             "body_plan": morphology_type,
+            "skeleton_schema_id": skeleton_schema_id,
             "variant_tags": variant_tags,
             "armor_state": armor_state,
             "mesh_forward_axis": mesh_forward_axis,
