@@ -1,24 +1,26 @@
 const state = {
   catalog: { animals: [], specs: [] },
   samples: [],
-  batchRuns: [],
+  batches: [],
   jobs: [],
-  selectedJobId: "",
+  selectedBatchId: "",
   selectedSampleId: "",
+  selectedJobId: "",
 };
 
 const elements = {
   statusLine: document.querySelector("#statusLine"),
   refreshButton: document.querySelector("#refreshButton"),
+  sampleForm: document.querySelector("#sampleForm"),
+  createSampleButton: document.querySelector("#createSampleButton"),
   runForm: document.querySelector("#runForm"),
   runButton: document.querySelector("#runButton"),
   animalSelect: document.querySelector("#animalSelect"),
+  batchCount: document.querySelector("#batchCount"),
   sampleCount: document.querySelector("#sampleCount"),
-  runCount: document.querySelector("#runCount"),
   jobCount: document.querySelector("#jobCount"),
-  catalogPath: document.querySelector("#catalogPath"),
-  specGrid: document.querySelector("#specGrid"),
-  runList: document.querySelector("#runList"),
+  batchList: document.querySelector("#batchList"),
+  batchDetail: document.querySelector("#batchDetail"),
   sampleList: document.querySelector("#sampleList"),
   sampleDetail: document.querySelector("#sampleDetail"),
   jobList: document.querySelector("#jobList"),
@@ -47,6 +49,10 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
+function sampleById(sampleId) {
+  return state.samples.find((sample) => sample.sample_id === sampleId);
+}
+
 async function fetchJson(url, options) {
   const response = await fetch(url, options);
   const body = await response.json();
@@ -60,23 +66,29 @@ async function loadState() {
   const data = await fetchJson("/api/state");
   state.catalog = data.catalog || { animals: [], specs: [] };
   state.samples = data.samples || [];
-  state.batchRuns = data.batch_runs || [];
+  state.batches = data.batches || data.batch_runs || [];
   state.jobs = data.jobs || [];
   render();
 }
 
-function render() {
-  if (!state.selectedSampleId && state.samples.length) {
-    state.selectedSampleId = state.samples[0].sample_id;
+function chooseSelections() {
+  if (!state.batches.some((batch) => batch.run_id === state.selectedBatchId)) {
+    state.selectedBatchId = state.batches[0]?.run_id || "";
   }
+  if (!state.samples.some((sample) => sample.sample_id === state.selectedSampleId)) {
+    state.selectedSampleId = state.samples[0]?.sample_id || "";
+  }
+}
+
+function render() {
+  chooseSelections();
   renderAnimals();
+  elements.batchCount.textContent = state.batches.length;
   elements.sampleCount.textContent = state.samples.length;
-  elements.runCount.textContent = state.batchRuns.length;
   elements.jobCount.textContent = state.jobs.length;
-  elements.catalogPath.textContent = state.catalog.path || "";
-  elements.statusLine.textContent = `${state.samples.length} samples, ${state.jobs.length} UI jobs`;
-  renderSpecs();
-  renderRuns();
+  elements.statusLine.textContent = `${state.batches.length} batches, ${state.samples.length} samples, ${state.jobs.length} UI jobs`;
+  renderBatches();
+  renderBatchDetail();
   renderSamples();
   renderSampleDetail();
   renderJobs();
@@ -94,104 +106,137 @@ function renderAnimals() {
     : "all";
 }
 
-function renderSpecs() {
-  const specs = state.catalog.specs || [];
-  if (!specs.length) {
-    elements.specGrid.innerHTML = '<p class="empty">No prompt specs found.</p>';
-    return;
-  }
-  elements.specGrid.innerHTML = specs
-    .map(
-      (spec) => `
-        <article class="spec-card">
-          <h3>${escapeHtml(spec.id)}</h3>
-          <p>${escapeHtml(spec.animal_description)}</p>
-          <div class="tag-row">
-            ${tag(spec.animal_type)}
-            ${tag(spec.morphology_type)}
-            ${tag(spec.armor_state)}
-            ${tag(spec.label_profile)}
-          </div>
-        </article>
-      `,
-    )
-    .join("");
+function batchStatus(batch) {
+  if (!batch.finished_at) return "open";
+  if (batch.failed_count) return "has_failures";
+  return batch.dry_run ? "dry_run" : "ready";
 }
 
-function renderRuns() {
-  if (!state.batchRuns.length) {
-    elements.runList.innerHTML = '<p class="empty">No batch runs yet.</p>';
+function renderBatches() {
+  if (!state.batches.length) {
+    elements.batchList.innerHTML = '<p class="empty">No batches yet.</p>';
     return;
   }
-  elements.runList.innerHTML = state.batchRuns
-    .slice(0, 8)
-    .map((run) => {
-      const failures = (run.samples || []).filter((sample) => sample.status === "failed").length;
+  elements.batchList.innerHTML = state.batches
+    .map((batch) => {
+      const faceRange = Array.isArray(batch.face_limit_range) && batch.face_limit_range.length === 2
+        ? `${batch.face_limit_range[0]}-${batch.face_limit_range[1]} faces`
+        : "";
       return `
-        <article class="run-item">
+        <article class="batch-item">
           <div class="item-header">
-            <h3>${escapeHtml(run.run_id)}</h3>
-            ${tag(run.dry_run ? "dry_run" : failures ? "has_failures" : "completed")}
+            <h3>${escapeHtml(batch.run_id)}</h3>
+            ${tag(batchStatus(batch))}
           </div>
-          <p>${run.count} samples started ${formatTime(run.started_at)}</p>
+          <p>${batch.count || 0} samples | ${formatTime(batch.started_at)}</p>
           <div class="tag-row">
-            ${tag(`${failures} failed`)}
-            ${tag(run.finished_at ? "finished" : "open")}
+            ${batch.seed ? tag(`seed ${batch.seed}`) : ""}
+            ${faceRange ? tag(faceRange) : ""}
+            ${batch.failed_count ? tag(`${batch.failed_count} failed`) : tag("0 failed")}
           </div>
+          <button type="button" data-batch-id="${escapeHtml(batch.run_id)}">View Batch</button>
         </article>
       `;
     })
     .join("");
+}
+
+function renderBatchDetail() {
+  const batch = state.batches.find((item) => item.run_id === state.selectedBatchId);
+  if (!batch) {
+    elements.batchDetail.innerHTML = '<p class="empty">Select a batch.</p>';
+    return;
+  }
+  const sampleIds = batch.sample_ids || [];
+  elements.batchDetail.innerHTML = `
+    <div class="item-header">
+      <h3>${escapeHtml(batch.run_id)}</h3>
+      ${tag(batchStatus(batch))}
+    </div>
+    <p class="detail-meta">
+      ${batch.count || 0} samples | started ${formatTime(batch.started_at)} | finished ${formatTime(batch.finished_at)}
+    </p>
+    <div class="tag-row">
+      ${batch.dry_run ? tag("dry run") : tag("live")}
+      ${batch.seed ? tag(`seed ${batch.seed}`) : ""}
+      ${batch.summary_path ? tag("summary saved") : ""}
+    </div>
+    <h4>Samples</h4>
+    <div class="sample-list batch-sample-list">
+      ${
+        sampleIds.length
+          ? sampleIds.map((sampleId) => batchSampleCard(sampleId)).join("")
+          : '<p class="empty">This batch has no sample membership recorded.</p>'
+      }
+    </div>
+  `;
+}
+
+function batchSampleCard(sampleId) {
+  const sample = sampleById(sampleId);
+  if (!sample) {
+    return `
+      <article class="sample-item">
+        <div class="item-header">
+          <h3>${escapeHtml(sampleId)}</h3>
+          ${tag("missing")}
+        </div>
+      </article>
+    `;
+  }
+  return sampleCard(sample, { compact: true, buttonLabel: "Open sample" });
 }
 
 function renderSamples() {
   if (!state.samples.length) {
     elements.sampleList.innerHTML = '<p class="empty">No samples yet.</p>';
-    elements.sampleDetail.innerHTML = '<p class="empty">No samples yet.</p>';
     return;
   }
-  elements.sampleList.innerHTML = state.samples
-    .map((sample) => {
-      const preview = sample.thumbnail_url
-        ? `<a class="sample-preview" href="${sample.thumbnail_url}" target="_blank" rel="noreferrer"><img src="${sample.thumbnail_url}" alt="${escapeHtml(sample.sample_id)} preview"></a>`
-        : "";
-      const isSelected = sample.sample_id === state.selectedSampleId;
-      return `
-        <article class="sample-item">
-          <div class="sample-title-row">
-            ${preview}
-            <div>
-              <div class="item-header">
-                <h3>${escapeHtml(sample.sample_id)}</h3>
-                ${tag(sample.status)}
-              </div>
-              <p>${escapeHtml(sample.animal_type)} / ${escapeHtml(sample.morphology_type)} / ${escapeHtml(sample.armor_state)}</p>
-              <div class="tag-row">
-                ${sample.face_limit ? tag(`${sample.face_limit} faces`) : ""}
-                ${sample.model?.url ? tag("model") : ""}
-                ${Object.keys(sample.reference_images || {}).length ? tag("reference") : ""}
-                ${Object.keys(sample.multiview_images || {}).length ? tag("multiview") : ""}
-                ${Object.keys(sample.review_images || {}).length ? tag("review") : ""}
-              </div>
-              <button type="button" data-sample-id="${escapeHtml(sample.sample_id)}">${isSelected ? "Selected" : "Preview"}</button>
-            </div>
-          </div>
-        </article>
-      `;
-    })
-    .join("");
+  elements.sampleList.innerHTML = state.samples.map((sample) => sampleCard(sample)).join("");
 }
 
-function orderedEntries(images, preferredOrder) {
+function sampleCard(sample, options = {}) {
+  const preview = sample.thumbnail_url
+    ? `<a class="sample-preview" href="${sample.thumbnail_url}" target="_blank" rel="noreferrer"><img src="${sample.thumbnail_url}" alt="${escapeHtml(sample.sample_id)} preview"></a>`
+    : "";
+  const batches = sample.batches || [];
+  const buttonLabel = options.buttonLabel || "View Sample";
+  return `
+    <article class="sample-item">
+      <div class="sample-title-row">
+        ${preview}
+        <div>
+          <div class="item-header">
+            <h3>${escapeHtml(sample.sample_id)}</h3>
+            ${tag(sample.status)}
+          </div>
+          <p>${escapeHtml(sample.animal_type)} / ${escapeHtml(sample.morphology_type)} / ${escapeHtml(sample.armor_state || "armor unspecified")}</p>
+          ${sample.prompt ? `<p class="prompt-snippet">${escapeHtml(sample.prompt)}</p>` : ""}
+          <div class="tag-row">
+            ${batches.length ? tag(`${batches.length} batches`) : tag("unbatched")}
+            ${sample.face_limit ? tag(`${sample.face_limit} faces`) : ""}
+            ${sample.model?.url ? tag("model") : ""}
+            ${Object.keys(sample.reference_images || {}).length ? tag("reference") : ""}
+            ${Object.keys(sample.multiview_images || {}).length ? tag("multiview") : ""}
+            ${Object.keys(sample.review_images || {}).length ? tag("review") : ""}
+          </div>
+          <button type="button" data-sample-id="${escapeHtml(sample.sample_id)}">${buttonLabel}</button>
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function orderedEntries(value, preferredOrder) {
   const entries = [];
   const seen = new Set();
   for (const key of preferredOrder) {
-    if (images?.[key]) {
-      entries.push([key, images[key]]);
+    if (value?.[key]) {
+      entries.push([key, value[key]]);
       seen.add(key);
     }
   }
-  for (const entry of Object.entries(images || {})) {
+  for (const entry of Object.entries(value || {})) {
     if (!seen.has(entry[0])) entries.push(entry);
   }
   return entries;
@@ -250,7 +295,7 @@ function promptPanel(sample) {
   const entries = orderedEntries(prompts, ["front", "left", "right", "back"]);
   if (!sample.prompt && !entries.length) return "";
   return `
-    <h4>Prompts</h4>
+    <h4>Prompt</h4>
     <div class="prompt-list">
       ${sample.prompt ? `<pre class="prompt-block">${escapeHtml(sample.prompt)}</pre>` : ""}
       ${entries
@@ -261,12 +306,13 @@ function promptPanel(sample) {
 }
 
 function renderSampleDetail() {
-  const sample = state.samples.find((item) => item.sample_id === state.selectedSampleId) || state.samples[0];
+  const sample = sampleById(state.selectedSampleId) || state.samples[0];
   if (!sample) {
     elements.sampleDetail.innerHTML = '<p class="empty">Select a sample.</p>';
     return;
   }
   state.selectedSampleId = sample.sample_id;
+  const batches = sample.batches || [];
   elements.sampleDetail.innerHTML = `
     <div class="item-header">
       <h3>${escapeHtml(sample.sample_id)}</h3>
@@ -276,6 +322,9 @@ function renderSampleDetail() {
       ${escapeHtml(sample.animal_type)} / ${escapeHtml(sample.morphology_type)} / ${escapeHtml(sample.armor_state || "no armor label")}
       ${sample.face_limit ? ` | ${escapeHtml(sample.face_limit)} faces` : ""}
     </p>
+    <div class="tag-row">
+      ${batches.length ? batches.map((batchId) => tag(batchId)).join("") : tag("unbatched")}
+    </div>
     ${modelPanel(sample)}
     ${gallery("Source References", sample.source_images, ["reference"])}
     ${gallery("OpenAI References", sample.reference_images, ["front", "left", "right", "back"])}
@@ -310,7 +359,18 @@ function renderJobs() {
     .join("");
 }
 
-function formPayload() {
+function samplePayload() {
+  const formData = new FormData(elements.sampleForm);
+  return {
+    prompt: formData.get("prompt") || "",
+    samplePrefix: formData.get("samplePrefix") || "sample",
+    animalType: formData.get("animalType") || "unknown",
+    morphologyType: formData.get("morphologyType") || formData.get("animalType") || "unknown",
+    armorState: formData.get("armorState") || "",
+  };
+}
+
+function batchPayload() {
   const formData = new FormData(elements.runForm);
   return {
     count: Number(formData.get("count") || 1),
@@ -326,15 +386,36 @@ function formPayload() {
   };
 }
 
+async function createSample(event) {
+  event.preventDefault();
+  elements.createSampleButton.disabled = true;
+  elements.statusLine.textContent = "Creating sample";
+  try {
+    const result = await fetchJson("/api/samples", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(samplePayload()),
+    });
+    state.selectedSampleId = result.sample_id;
+    await loadState();
+    renderSampleDetail();
+    switchView("sampleDetail");
+  } catch (error) {
+    elements.statusLine.textContent = error.message;
+  } finally {
+    elements.createSampleButton.disabled = false;
+  }
+}
+
 async function startBatch(event) {
   event.preventDefault();
   elements.runButton.disabled = true;
-  elements.statusLine.textContent = "Starting job";
+  elements.statusLine.textContent = "Starting batch job";
   try {
     const job = await fetchJson("/api/run-batch", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(formPayload()),
+      body: JSON.stringify(batchPayload()),
     });
     state.selectedJobId = job.job_id;
     await loadState();
@@ -354,26 +435,51 @@ async function loadJobLog(jobId) {
 }
 
 function switchView(viewName) {
+  const activeTab = {
+    batchDetail: "batches",
+    sampleDetail: "samples",
+  }[viewName] || viewName;
   document.querySelectorAll(".tab").forEach((button) => {
-    button.classList.toggle("is-active", button.dataset.view === viewName);
+    button.classList.toggle("is-active", button.dataset.view === activeTab);
   });
   document.querySelectorAll(".view").forEach((view) => {
     view.classList.toggle("is-active", view.id === `${viewName}View`);
   });
 }
 
-document.querySelectorAll(".tab").forEach((button) => {
-  button.addEventListener("click", () => switchView(button.dataset.view));
+function openSample(sampleId) {
+  state.selectedSampleId = sampleId;
+  renderSamples();
+  renderSampleDetail();
+  switchView("sampleDetail");
+}
+
+document.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-view]");
+  if (!button) return;
+  switchView(button.dataset.view);
 });
 
 elements.refreshButton.addEventListener("click", loadState);
+elements.sampleForm.addEventListener("submit", createSample);
 elements.runForm.addEventListener("submit", startBatch);
+elements.batchList.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-batch-id]");
+  if (!button) return;
+  state.selectedBatchId = button.dataset.batchId;
+  renderBatches();
+  renderBatchDetail();
+  switchView("batchDetail");
+});
+elements.batchDetail.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-sample-id]");
+  if (!button) return;
+  openSample(button.dataset.sampleId);
+});
 elements.sampleList.addEventListener("click", (event) => {
   const button = event.target.closest("button[data-sample-id]");
   if (!button) return;
-  state.selectedSampleId = button.dataset.sampleId;
-  renderSamples();
-  renderSampleDetail();
+  openSample(button.dataset.sampleId);
 });
 elements.jobList.addEventListener("click", async (event) => {
   const button = event.target.closest("button[data-job-id]");

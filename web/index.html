@@ -19,91 +19,23 @@
     </header>
 
     <main class="shell">
-      <aside class="control-panel">
-        <form id="runForm">
-          <section class="panel-section">
-            <h2>Batch</h2>
-            <label>
-              Count
-              <input id="countInput" name="count" type="number" min="1" max="100" value="4">
-            </label>
-            <label>
-              Prefix
-              <input id="prefixInput" name="samplePrefix" type="text" value="ui">
-            </label>
-            <label>
-              Seed
-              <input id="seedInput" name="seed" type="number" min="0" value="0">
-            </label>
-          </section>
-
-          <section class="panel-section">
-            <h2>Catalog</h2>
-            <label>
-              Animal
-              <select id="animalSelect" name="animalType">
-                <option value="all">All animals</option>
-              </select>
-            </label>
-            <label>
-              Armor
-              <select id="armorSelect" name="armorState">
-                <option value="all">Any</option>
-                <option value="armored">Armored</option>
-                <option value="unarmored">Unarmored</option>
-              </select>
-            </label>
-          </section>
-
-          <section class="panel-section">
-            <h2>Tripo</h2>
-            <div class="number-row">
-              <label>
-                Min faces
-                <input id="faceMinInput" name="faceLimitMin" type="number" min="1" value="3000">
-              </label>
-              <label>
-                Max faces
-                <input id="faceMaxInput" name="faceLimitMax" type="number" min="1" value="8000">
-              </label>
-            </div>
-          </section>
-
-          <section class="panel-section switches">
-            <label class="switch-row">
-              <input id="dryRunInput" name="dryRun" type="checkbox" checked>
-              <span>Dry run</span>
-            </label>
-            <label class="switch-row">
-              <input id="prepareInput" name="prepareLabelWork" type="checkbox">
-              <span>Prepare Blender labels</span>
-            </label>
-            <label class="switch-row">
-              <input id="continueInput" name="continueOnError" type="checkbox" checked>
-              <span>Continue on error</span>
-            </label>
-          </section>
-
-          <button id="runButton" class="primary-action" type="submit">Run Batch</button>
-        </form>
-      </aside>
-
       <section class="workspace">
         <nav class="tabs" aria-label="Views">
-          <button class="tab is-active" type="button" data-view="overview">Overview</button>
+          <button class="tab is-active" type="button" data-view="batches">Batches</button>
           <button class="tab" type="button" data-view="samples">Samples</button>
+          <button class="tab" type="button" data-view="create">Create</button>
           <button class="tab" type="button" data-view="jobs">Jobs</button>
         </nav>
 
-        <section id="overviewView" class="view is-active">
+        <section id="batchesView" class="view is-active">
           <div class="metric-strip">
+            <div>
+              <span id="batchCount">0</span>
+              <p>Batches</p>
+            </div>
             <div>
               <span id="sampleCount">0</span>
               <p>Samples</p>
-            </div>
-            <div>
-              <span id="runCount">0</span>
-              <p>Runs</p>
             </div>
             <div>
               <span id="jobCount">0</span>
@@ -113,29 +45,141 @@
 
           <section class="content-band">
             <div class="section-heading">
-              <h2>Prompt Catalog</h2>
-              <span id="catalogPath"></span>
+              <h2>Batches</h2>
+              <button type="button" data-view="create">Create Batch</button>
             </div>
-            <div id="specGrid" class="spec-grid"></div>
+            <div id="batchList" class="batch-list"></div>
           </section>
+        </section>
 
-          <section class="content-band">
-            <div class="section-heading">
-              <h2>Recent Runs</h2>
-            </div>
-            <div id="runList" class="run-list"></div>
+        <section id="batchDetailView" class="view">
+          <div class="page-heading">
+            <button type="button" data-view="batches">Back to Batches</button>
+          </div>
+          <section id="batchDetail" class="detail-page">
+            <p class="empty">Select a batch.</p>
           </section>
         </section>
 
         <section id="samplesView" class="view">
           <div class="section-heading">
             <h2>Samples</h2>
+            <button type="button" data-view="create">Create Sample</button>
           </div>
-          <div class="sample-workbench">
-            <div id="sampleList" class="sample-list"></div>
-            <div id="sampleDetail" class="sample-detail">
-              <p class="empty">Select a sample.</p>
-            </div>
+          <div id="sampleList" class="sample-list"></div>
+        </section>
+
+        <section id="sampleDetailView" class="view">
+          <div class="page-heading">
+            <button type="button" data-view="samples">Back to Samples</button>
+          </div>
+          <section id="sampleDetail" class="detail-page">
+            <p class="empty">Select a sample.</p>
+          </section>
+        </section>
+
+        <section id="createView" class="view">
+          <div class="section-heading">
+            <h2>Create</h2>
+          </div>
+          <div class="create-grid">
+            <form id="sampleForm" class="content-band">
+              <section class="panel-section">
+                <h2>Create Sample</h2>
+                <label>
+                  Prompt
+                  <textarea id="promptInput" name="prompt" rows="5" placeholder="armored river otter with clean quadruped proportions"></textarea>
+                </label>
+                <div class="field-grid">
+                  <label>
+                    Prefix
+                    <input id="samplePrefixInput" name="samplePrefix" type="text" value="sample">
+                  </label>
+                  <label>
+                    Animal label
+                    <input id="sampleAnimalInput" name="animalType" type="text" value="unknown">
+                  </label>
+                  <label>
+                    Morphology label
+                    <input id="sampleMorphologyInput" name="morphologyType" type="text" value="unknown">
+                  </label>
+                  <label>
+                    Armor
+                    <select id="sampleArmorSelect" name="armorState">
+                      <option value="">Unspecified</option>
+                      <option value="armored">Armored</option>
+                      <option value="unarmored">Unarmored</option>
+                    </select>
+                  </label>
+                </div>
+                <button id="createSampleButton" class="primary-action" type="submit">Create Sample</button>
+              </section>
+            </form>
+
+            <form id="runForm" class="content-band">
+              <section class="panel-section">
+                <h2>Create Catalog Batch</h2>
+                <div class="field-grid">
+                  <label>
+                    Count
+                    <input id="countInput" name="count" type="number" min="1" max="100" value="4">
+                  </label>
+                  <label>
+                    Prefix
+                    <input id="prefixInput" name="samplePrefix" type="text" value="ui">
+                  </label>
+                  <label>
+                    Seed
+                    <input id="seedInput" name="seed" type="number" min="0" value="0">
+                  </label>
+                  <label>
+                    Animal
+                    <select id="animalSelect" name="animalType">
+                      <option value="all">All animals</option>
+                    </select>
+                  </label>
+                  <label>
+                    Armor
+                    <select id="armorSelect" name="armorState">
+                      <option value="all">Any</option>
+                      <option value="armored">Armored</option>
+                      <option value="unarmored">Unarmored</option>
+                    </select>
+                  </label>
+                </div>
+              </section>
+
+              <section class="panel-section">
+                <h2>Tripo Target</h2>
+                <div class="number-row">
+                  <label>
+                    Min faces
+                    <input id="faceMinInput" name="faceLimitMin" type="number" min="1" value="3000">
+                  </label>
+                  <label>
+                    Max faces
+                    <input id="faceMaxInput" name="faceLimitMax" type="number" min="1" value="8000">
+                  </label>
+                </div>
+              </section>
+
+              <section class="panel-section switches">
+                <label class="switch-row">
+                  <input id="dryRunInput" name="dryRun" type="checkbox" checked>
+                  <span>Dry run</span>
+                </label>
+                <label class="switch-row">
+                  <input id="prepareInput" name="prepareLabelWork" type="checkbox">
+                  <span>Prepare Blender labels</span>
+                </label>
+                <label class="switch-row">
+                  <input id="continueInput" name="continueOnError" type="checkbox" checked>
+                  <span>Continue on error</span>
+                </label>
+              </section>
+
+              <button id="runButton" class="primary-action" type="submit">Run Batch</button>
+            </form>
           </div>
         </section>
 

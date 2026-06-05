@@ -27,6 +27,12 @@ IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 MODEL_EXTENSIONS = {".glb", ".gltf"}
 REFERENCE_ORDER = ("front", "left", "right", "back")
 REVIEW_ORDER = ("front", "left", "right", "rear", "top", "quarter")
+DEFAULT_VIEW_INSTRUCTIONS = {
+    "front": "front orthographic view, animal facing directly toward the camera",
+    "left": "left side orthographic profile, animal facing toward the viewer's left",
+    "right": "right side orthographic profile, animal facing toward the viewer's right",
+    "back": "back orthographic view, animal facing directly away from the camera",
+}
 
 
 def read_json(path: Path, default: Any) -> Any:
@@ -81,6 +87,7 @@ class WorkflowStore:
 
     def sample_states(self) -> list[dict[str, Any]]:
         samples: list[dict[str, Any]] = []
+        sample_batches = self.sample_membership()
         if not self.work_root.exists():
             return samples
         for state_path in sorted(self.work_root.glob("*/workflow_state.json")):
@@ -104,8 +111,10 @@ class WorkflowStore:
                     "morphology_type": state.get("morphology_type", ""),
                     "armor_state": state.get("armor_state", ""),
                     "status": state.get("status", ""),
+                    "created_at": state.get("created_at", 0),
                     "updated_at": state.get("updated_at", state.get("created_at", 0)),
                     "face_limit": (state.get("batch_runner") or {}).get("face_limit"),
+                    "batches": sample_batches.get(sample_id, []),
                     "source_images": source_images,
                     "reference_images": reference_images,
                     "multiview_images": multiview_images,
@@ -127,24 +136,75 @@ class WorkflowStore:
         samples.sort(key=lambda item: (item.get("updated_at") or 0, item["sample_id"]), reverse=True)
         return samples[:120]
 
-    def batch_runs(self) -> list[dict[str, Any]]:
+    def batch_summaries(self) -> list[dict[str, Any]]:
         runs: list[dict[str, Any]] = []
         for run_path in sorted((self.work_root / "batch_runs").glob("*.json")):
             run = read_json(run_path, {})
             if not run:
                 continue
+            run["summary_path"] = str(run_path)
+            runs.append(run)
+        runs.sort(key=lambda item: item.get("started_at") or 0, reverse=True)
+        return runs
+
+    def batch_sample_ids(self, run: dict[str, Any]) -> list[str]:
+        ids: list[str] = []
+        for sample_id in run.get("created", []):
+            if isinstance(sample_id, str) and sample_id:
+                ids.append(sample_id)
+        for sample in run.get("samples", []):
+            if isinstance(sample, dict):
+                sample_id = sample.get("sample_id")
+                if isinstance(sample_id, str) and sample_id:
+                    ids.append(sample_id)
+        unique: list[str] = []
+        seen: set[str] = set()
+        for sample_id in ids:
+            if sample_id not in seen:
+                seen.add(sample_id)
+                unique.append(sample_id)
+        return unique
+
+    def sample_membership(self) -> dict[str, list[str]]:
+        membership: dict[str, list[str]] = {}
+        for run in self.batch_summaries():
+            run_id = str(run.get("run_id") or "")
+            if not run_id:
+                continue
+            for sample_id in self.batch_sample_ids(run):
+                membership.setdefault(sample_id, []).append(run_id)
+        return membership
+
+    def batch_runs(self) -> list[dict[str, Any]]:
+        runs: list[dict[str, Any]] = []
+        for run in self.batch_summaries():
+            sample_ids = self.batch_sample_ids(run)
+            samples = run.get("samples", [])
+            if not isinstance(samples, list):
+                samples = []
+            if not run:
+                continue
+            failures = [
+                sample
+                for sample in samples
+                if isinstance(sample, dict) and sample.get("status") in {"failed", "reference_failed", "tripo_failed"}
+            ]
             runs.append(
                 {
-                    "run_id": run.get("run_id", run_path.stem),
+                    "run_id": run.get("run_id", ""),
                     "dry_run": run.get("dry_run", False),
                     "started_at": run.get("started_at", 0),
                     "finished_at": run.get("finished_at", 0),
-                    "count": len(run.get("samples", [])),
-                    "samples": run.get("samples", []),
-                    "summary_path": str(run_path),
+                    "count": len(sample_ids) or len(samples),
+                    "sample_ids": sample_ids,
+                    "samples": samples,
+                    "created": run.get("created", []),
+                    "seed": run.get("seed", 0),
+                    "face_limit_range": run.get("face_limit_range", []),
+                    "failed_count": len(failures),
+                    "summary_path": run.get("summary_path", ""),
                 }
             )
-        runs.sort(key=lambda item: item.get("started_at") or 0, reverse=True)
         return runs[:50]
 
     def jobs(self) -> list[dict[str, Any]]:
@@ -300,6 +360,75 @@ class WorkflowStore:
         thread.start()
         return job
 
+    def create_sample(self, payload: dict[str, Any]) -> dict[str, Any]:
+        prompt = str(payload.get("prompt") or "").strip()
+        if not prompt:
+            raise ValueError("Prompt is required.")
+        prefix = safe_token(payload.get("samplePrefix"), "sample")
+        sample_id = safe_token(payload.get("sampleId"), "")
+        if not sample_id:
+            sample_id = f"{prefix}_{int(time.time())}_{uuid.uuid4().hex[:6]}"
+        path = self.work_root / sample_id / "workflow_state.json"
+        if path.exists():
+            raise ValueError(f"Sample already exists: {sample_id}")
+
+        animal_type = str(payload.get("animalType") or "unknown").strip() or "unknown"
+        morphology_type = str(payload.get("morphologyType") or animal_type).strip() or animal_type
+        armor_state = str(payload.get("armorState") or "").strip()
+        label_profile = str(payload.get("labelProfile") or "AUTO").strip() or "AUTO"
+        mesh_forward_axis = str(payload.get("meshForwardAxis") or "POS_Y").strip() or "POS_Y"
+        now = int(time.time())
+        state = {
+            "sample_id": sample_id,
+            "prompt": prompt,
+            "animal_type": animal_type,
+            "morphology_type": morphology_type,
+            "armor_state": armor_state,
+            "mesh_forward_axis": mesh_forward_axis,
+            "label_profile": label_profile,
+            "openai_reference_prompts": self.custom_view_prompts(prompt),
+            "openai_reference_defaults": self.catalog().get("defaults", {}),
+            "status": "initialized",
+            "created_at": now,
+            "updated_at": now,
+            "created_by": "qwalk_ui",
+        }
+        write_json(path, state)
+        return {"sample_id": sample_id, "state_path": str(path), "sample": state}
+
+    def custom_view_prompts(self, prompt: str) -> dict[str, str]:
+        catalog = self.catalog()
+        defaults = catalog.get("defaults", {})
+        if not isinstance(defaults, dict):
+            defaults = {}
+        template = catalog.get("prompt_template")
+        views = catalog.get("views")
+        if not isinstance(views, dict):
+            views = DEFAULT_VIEW_INSTRUCTIONS
+        if not isinstance(template, str) or not template:
+            return {
+                view: (
+                    "Create reference art for one symmetrical four-legged animal intended for Tripo3D mesh "
+                    f"generation. Animal brief: {prompt}. View: {instruction}. Use a neutral standing pose, "
+                    "plain white background, full body visible, animation-ready proportions, and no text."
+                )
+                for view, instruction in DEFAULT_VIEW_INSTRUCTIONS.items()
+            }
+        prompts: dict[str, str] = {}
+        values = {
+            "animal_description": prompt,
+            "equipment_description": "as described in the user prompt",
+            "style_notes": defaults.get("style_notes", ""),
+            "negative_notes": defaults.get("negative_notes", ""),
+        }
+        for view in REFERENCE_ORDER:
+            prompts[view] = template.format(
+                **values,
+                view=view,
+                view_instruction=views.get(view, DEFAULT_VIEW_INSTRUCTIONS[view]),
+            )
+        return prompts
+
     def _run_job(self, job_id: str, command: list[str]) -> None:
         log_path = self.job_root / f"{job_id}.log"
         job_path = self.job_root / f"{job_id}.json"
@@ -342,11 +471,13 @@ class QWalkUIHandler(BaseHTTPRequestHandler):
             except (OSError, ValueError):
                 self.send_error(404, "File not found")
         elif parsed.path == "/api/state":
+            batches = self.store.batch_runs()
             self.send_json(
                 {
                     "catalog": self.store.catalog(),
                     "samples": self.store.sample_states(),
-                    "batch_runs": self.store.batch_runs(),
+                    "batches": batches,
+                    "batch_runs": batches,
                     "jobs": self.store.jobs(),
                 }
             )
@@ -371,13 +502,16 @@ class QWalkUIHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
-        if parsed.path != "/api/run-batch":
-            self.send_error(404, "Not found")
-            return
         try:
             payload = self.read_json_body()
-            job = self.store.start_run_batch(payload)
-            self.send_json(job, status=202)
+            if parsed.path == "/api/run-batch":
+                job = self.store.start_run_batch(payload)
+                self.send_json(job, status=202)
+            elif parsed.path == "/api/samples":
+                sample = self.store.create_sample(payload)
+                self.send_json(sample, status=201)
+            else:
+                self.send_error(404, "Not found")
         except Exception as error:
             self.send_json({"error": str(error)}, status=400)
 
@@ -433,7 +567,8 @@ def main() -> None:
     QWalkUIHandler.store = store
     server = ThreadingHTTPServer((args.host, args.port), QWalkUIHandler)
     url = f"http://{args.host}:{args.port}"
-    print(f"QWalk UI running at {url}")
+    if sys.stdout is not None:
+        print(f"QWalk UI running at {url}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

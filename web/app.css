@@ -27,7 +27,8 @@ body {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -74,15 +75,7 @@ button:disabled {
 }
 
 .shell {
-  display: grid;
-  grid-template-columns: 320px minmax(0, 1fr);
   min-height: calc(100vh - 76px);
-}
-
-.control-panel {
-  border-right: 1px solid var(--line);
-  background: #fbfcfb;
-  padding: 18px;
 }
 
 .panel-section {
@@ -107,18 +100,31 @@ label {
 }
 
 input,
-select {
+select,
+textarea {
   width: 100%;
-  height: 38px;
   border: 1px solid var(--line);
   border-radius: 6px;
   background: var(--surface);
   color: var(--ink);
+}
+
+input,
+select {
+  height: 38px;
   padding: 0 10px;
 }
 
+textarea {
+  min-height: 118px;
+  resize: vertical;
+  padding: 10px;
+  line-height: 1.45;
+}
+
 input:focus,
-select:focus {
+select:focus,
+textarea:focus {
   border-color: var(--teal);
   outline: 3px solid rgba(15, 118, 110, 0.16);
 }
@@ -168,7 +174,9 @@ select:focus {
 
 .workspace {
   min-width: 0;
-  padding: 18px 22px 32px;
+  width: min(1440px, calc(100vw - 44px));
+  margin: 0 auto;
+  padding: 18px 0 32px;
 }
 
 .tabs {
@@ -204,6 +212,7 @@ select:focus {
 
 .metric-strip div,
 .content-band,
+.batch-item,
 .sample-item,
 .job-item,
 .run-item,
@@ -262,6 +271,7 @@ select:focus {
 }
 
 .spec-card h3,
+.batch-item h3,
 .sample-item h3,
 .job-item h3,
 .run-item h3 {
@@ -271,6 +281,7 @@ select:focus {
 }
 
 .spec-card p,
+.batch-item p,
 .sample-item p,
 .job-item p,
 .run-item p {
@@ -304,12 +315,19 @@ select:focus {
   color: var(--amber);
 }
 
+.tag.status-open,
+.tag.status-has_failures {
+  border-color: rgba(180, 83, 9, 0.3);
+  color: var(--amber);
+}
+
 .tag.status-failed {
   border-color: rgba(185, 28, 28, 0.3);
   color: var(--red);
 }
 
 .tag.status-completed,
+.tag.status-ready,
 .tag.status-model_downloaded,
 .tag.status-label_work_prepared,
 .tag.status-runner_planned {
@@ -318,26 +336,44 @@ select:focus {
 }
 
 .run-list,
+.batch-list,
 .sample-list,
 .job-list {
   display: grid;
   gap: 10px;
 }
 
-.sample-item,
-.job-item,
-.run-item {
-  padding: 12px;
+.batch-list,
+.sample-list {
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
 }
 
-.sample-workbench {
+.job-list {
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+}
+
+.create-grid {
   display: grid;
-  grid-template-columns: minmax(280px, 420px) minmax(0, 1fr);
-  gap: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
   align-items: start;
 }
 
-.sample-detail {
+.field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.page-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.detail-page {
   min-width: 0;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -346,15 +382,22 @@ select:focus {
   padding: 14px;
 }
 
-.sample-detail h3 {
+.detail-page h3 {
   margin: 0;
   font-size: 18px;
 }
 
-.sample-detail h4 {
+.detail-page h4 {
   margin: 18px 0 10px;
   font-size: 13px;
   font-weight: 760;
+}
+
+.batch-item,
+.sample-item,
+.job-item,
+.run-item {
+  padding: 12px;
 }
 
 .detail-meta {
@@ -435,9 +478,18 @@ select:focus {
   align-items: flex-start;
 }
 
+.batch-item button,
 .sample-item button {
   min-height: 32px;
   padding: 0 10px;
+  margin-top: 10px;
+}
+
+.prompt-snippet {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .model-panel {
@@ -522,20 +574,19 @@ model-viewer {
     flex-direction: column;
   }
 
-  .shell {
-    grid-template-columns: 1fr;
-  }
-
-  .control-panel {
-    border-right: 0;
-    border-bottom: 1px solid var(--line);
-  }
-
   .metric-strip {
     grid-template-columns: 1fr;
   }
 
-  .sample-workbench {
+  .workspace {
+    width: min(100vw - 28px, 1440px);
+  }
+
+  .batch-list,
+  .sample-list,
+  .job-list,
+  .create-grid,
+  .field-grid {
     grid-template-columns: 1fr;
   }
 }
