@@ -225,6 +225,17 @@ textarea:focus {
   background: var(--teal-dark);
 }
 
+.primary-inline-action {
+  border-color: var(--teal);
+  background: var(--teal);
+  color: white;
+  font-weight: 720;
+}
+
+.primary-inline-action:hover {
+  background: var(--teal-dark);
+}
+
 .workspace {
   min-width: 0;
   width: min(1440px, calc(100vw - 44px));
@@ -368,6 +379,20 @@ textarea:focus {
   color: var(--amber);
 }
 
+.tag.status-complete {
+  border-color: rgba(15, 118, 110, 0.28);
+  color: var(--teal);
+}
+
+.tag.status-reference_running,
+.tag.status-tripo_submission_running,
+.tag.status-tripo_polling,
+.tag.status-label_work_running,
+.tag.status-pipeline_running {
+  border-color: rgba(180, 83, 9, 0.3);
+  color: var(--amber);
+}
+
 .tag.status-open,
 .tag.status-has_failures {
   border-color: rgba(180, 83, 9, 0.3);
@@ -377,6 +402,22 @@ textarea:focus {
 .tag.status-failed {
   border-color: rgba(185, 28, 28, 0.3);
   color: var(--red);
+}
+
+.tag.status-stale,
+.tag.status-ui_job_stale {
+  border-color: rgba(180, 83, 9, 0.3);
+  color: var(--amber);
+}
+
+.tag.status-ui_job_failed {
+  border-color: rgba(185, 28, 28, 0.3);
+  color: var(--red);
+}
+
+.tag.status-manual {
+  border-color: rgba(67, 56, 202, 0.28);
+  color: var(--indigo);
 }
 
 .tag.status-completed,
@@ -458,6 +499,155 @@ textarea:focus {
   color: var(--muted);
   font-size: 12px;
   line-height: 1.5;
+}
+
+.sample-actions {
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfb;
+}
+
+.action-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.action-header h4 {
+  margin-top: 0;
+}
+
+.action-header button {
+  min-height: 32px;
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
+.pipeline-dag {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0;
+  align-items: stretch;
+  margin-top: 14px;
+}
+
+.pipeline-step-wrap {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  padding-left: 14px;
+}
+
+.pipeline-step-wrap:first-child {
+  padding-left: 0;
+}
+
+.pipeline-edge {
+  position: absolute;
+  top: 31px;
+  left: 0;
+  width: 14px;
+  height: 2px;
+  background: var(--line);
+}
+
+.pipeline-step {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  column-gap: 8px;
+  row-gap: 8px;
+  min-height: 86px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.pipeline-step div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.pipeline-step strong {
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+.pipeline-step div span {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.pipeline-step .tag {
+  grid-column: 1 / -1;
+  justify-self: start;
+  margin-left: 0;
+}
+
+.step-state-dot {
+  width: 10px;
+  height: 10px;
+  margin-top: 3px;
+  border-radius: 999px;
+  border: 2px solid var(--line);
+  background: var(--surface);
+}
+
+.pipeline-step.step-complete {
+  border-color: rgba(15, 118, 110, 0.35);
+  background: #f3fbf8;
+}
+
+.pipeline-step.step-complete .step-state-dot {
+  border-color: var(--teal);
+  background: var(--teal);
+}
+
+.pipeline-step.step-running,
+.pipeline-step.step-ready {
+  border-color: rgba(180, 83, 9, 0.34);
+  background: #fffaf2;
+}
+
+.pipeline-step.step-running .step-state-dot,
+.pipeline-step.step-ready .step-state-dot {
+  border-color: var(--amber);
+  background: var(--amber);
+}
+
+.pipeline-step.step-manual {
+  border-color: rgba(67, 56, 202, 0.28);
+  background: #f7f7ff;
+}
+
+.pipeline-step.step-manual .step-state-dot {
+  border-color: var(--indigo);
+  background: var(--indigo);
+}
+
+.next-step-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.next-step-row button {
+  min-height: 38px;
+  padding: 0 12px;
+}
+
+.next-step-row span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
 }
 
 .asset-gallery {
@@ -639,7 +829,24 @@ model-viewer {
   .sample-list,
   .job-list,
   .create-grid,
-  .field-grid {
+  .field-grid,
+  .pipeline-dag {
     grid-template-columns: 1fr;
+  }
+
+  .pipeline-step-wrap {
+    padding-left: 0;
+    padding-top: 14px;
+  }
+
+  .pipeline-step-wrap:first-child {
+    padding-top: 0;
+  }
+
+  .pipeline-edge {
+    top: 0;
+    left: 20px;
+    width: 2px;
+    height: 14px;
   }
 }

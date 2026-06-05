@@ -7,6 +7,8 @@ import argparse
 import json
 import mimetypes
 import os
+import random
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -23,10 +25,20 @@ WEB_ROOT = REPO_ROOT / "web"
 DEFAULT_WORK_ROOT = REPO_ROOT / "data" / "automated_training"
 DEFAULT_CATALOG = REPO_ROOT / "prompts" / "quadruped_reference_prompts.json"
 WORKFLOW_SCRIPT = REPO_ROOT / "scripts" / "automated_training_workflow.py"
+UI_DB_NAME = "qwalk_ui.sqlite3"
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 MODEL_EXTENSIONS = {".glb", ".gltf"}
 REFERENCE_ORDER = ("front", "left", "right", "back")
 REVIEW_ORDER = ("front", "left", "right", "rear", "top", "quarter")
+STALE_JOB_SECONDS = 15 * 60
+RUNNING_SAMPLE_STATUS_SUFFIXES = ("running", "polling")
+SAMPLE_ACTION_STATUS = {
+    "generate-reference": "reference_running",
+    "submit-tripo": "tripo_submission_running",
+    "poll-tripo": "tripo_polling",
+    "prepare-label-work": "label_work_running",
+    "run-pipeline": "pipeline_running",
+}
 DEFAULT_VIEW_INSTRUCTIONS = {
     "front": "front orthographic view, animal facing directly toward the camera",
     "left": "left side orthographic profile, animal facing toward the viewer's left",
@@ -41,6 +53,18 @@ LEGACY_BODY_PLAN_ALIASES = {
     "lagomorph": "hind_leg_dominant",
     "reptile_shell": "shell_reptile",
 }
+
+
+def workflow_python_executable() -> str:
+    executable = Path(sys.executable)
+    if executable.name.lower() == "pythonw.exe":
+        candidate = executable.with_name("python.exe")
+        if candidate.exists():
+            return str(candidate)
+    return str(executable)
+
+
+WORKFLOW_PYTHON = workflow_python_executable()
 
 
 def read_json(path: Path, default: Any) -> Any:
@@ -96,11 +120,222 @@ def body_plan_value(state: dict[str, Any]) -> str:
     return LEGACY_BODY_PLAN_ALIASES.get(raw, raw)
 
 
+class JobDatabase:
+    def __init__(self, path: Path, legacy_job_root: Path) -> None:
+        self.path = path
+        self.legacy_job_root = legacy_job_root
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.initialize()
+        self.import_legacy_jobs()
+
+    def connect(self) -> sqlite3.Connection:
+        connection = sqlite3.connect(self.path, timeout=30)
+        connection.row_factory = sqlite3.Row
+        return connection
+
+    def initialize(self) -> None:
+        with self.connect() as connection:
+            connection.execute("PRAGMA journal_mode=WAL")
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS ui_jobs (
+                    job_id TEXT PRIMARY KEY,
+                    action TEXT NOT NULL DEFAULT '',
+                    sample_id TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL,
+                    started_at INTEGER NOT NULL,
+                    finished_at INTEGER NOT NULL DEFAULT 0,
+                    returncode INTEGER,
+                    payload_json TEXT NOT NULL DEFAULT '{}',
+                    command_json TEXT NOT NULL DEFAULT '[]',
+                    log_path TEXT NOT NULL DEFAULT '',
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS ui_meta (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute("CREATE INDEX IF NOT EXISTS idx_ui_jobs_sample_id ON ui_jobs(sample_id)")
+            connection.execute("CREATE INDEX IF NOT EXISTS idx_ui_jobs_status ON ui_jobs(status)")
+
+    def import_legacy_jobs(self) -> None:
+        if self.meta_value("legacy_jobs_imported") == "1":
+            return
+        if not self.legacy_job_root.exists():
+            self.set_meta_value("legacy_jobs_imported", "1")
+            return
+        for job_path in sorted(self.legacy_job_root.glob("*.json")):
+            job = read_json(job_path, {})
+            if not isinstance(job, dict) or not job.get("job_id"):
+                continue
+            self.insert_job(job, self.legacy_job_root / f"{job['job_id']}.log", ignore_existing=True)
+        self.set_meta_value("legacy_jobs_imported", "1")
+
+    def meta_value(self, key: str) -> str:
+        with self.connect() as connection:
+            row = connection.execute("SELECT value FROM ui_meta WHERE key = ?", (key,)).fetchone()
+        return str(row["value"]) if row else ""
+
+    def set_meta_value(self, key: str, value: str) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO ui_meta (key, value)
+                VALUES (?, ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                """,
+                (key, value),
+            )
+
+    def insert_job(self, job: dict[str, Any], log_path: Path, ignore_existing: bool = False) -> None:
+        payload = job.get("payload") if isinstance(job.get("payload"), dict) else {}
+        commands = job.get("commands") if isinstance(job.get("commands"), list) else [job.get("command", [])]
+        command_json = json.dumps(commands)
+        payload_json = json.dumps(payload)
+        action = str(payload.get("action") or ("run-batch" if payload.get("count") else ""))
+        sample_id = str(payload.get("sampleId") or payload.get("sample_id") or "")
+        now = int(time.time())
+        verb = "INSERT OR IGNORE" if ignore_existing else "INSERT"
+        with self.connect() as connection:
+            connection.execute(
+                f"""
+                {verb} INTO ui_jobs (
+                    job_id,
+                    action,
+                    sample_id,
+                    status,
+                    started_at,
+                    finished_at,
+                    returncode,
+                    payload_json,
+                    command_json,
+                    log_path,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(job["job_id"]),
+                    action,
+                    sample_id,
+                    str(job.get("status") or "running"),
+                    int(job.get("started_at") or now),
+                    int(job.get("finished_at") or 0),
+                    job.get("returncode"),
+                    payload_json,
+                    command_json,
+                    str(log_path),
+                    int(job.get("started_at") or now),
+                    now,
+                ),
+            )
+
+    def update_job(self, job_id: str, status: str, finished_at: int, returncode: int | None) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                """
+                UPDATE ui_jobs
+                SET status = ?, finished_at = ?, returncode = ?, updated_at = ?
+                WHERE job_id = ?
+                """,
+                (status, finished_at, returncode, int(time.time()), job_id),
+            )
+
+    def mark_stale_jobs(self, active_job_ids: set[str], stale_seconds: int) -> list[dict[str, Any]]:
+        now = int(time.time())
+        cutoff = now - stale_seconds
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT *
+                FROM ui_jobs
+                WHERE status = 'running'
+                  AND started_at <= ?
+                ORDER BY started_at DESC
+                """,
+                (cutoff,),
+            ).fetchall()
+            stale_rows = [row for row in rows if str(row["job_id"]) not in active_job_ids]
+            for row in stale_rows:
+                connection.execute(
+                    """
+                    UPDATE ui_jobs
+                    SET status = 'stale', finished_at = ?, updated_at = ?
+                    WHERE job_id = ? AND status = 'running'
+                    """,
+                    (now, now, row["job_id"]),
+                )
+        return [
+            {
+                **self.job_from_row(row, now=now),
+                "status": "stale",
+                "finished_at": now,
+            }
+            for row in stale_rows
+        ]
+
+    def jobs(self, limit: int = 50) -> list[dict[str, Any]]:
+        now = int(time.time())
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT *
+                FROM ui_jobs
+                ORDER BY started_at DESC, job_id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [self.job_from_row(row, now=now) for row in rows]
+
+    def job(self, job_id: str) -> dict[str, Any] | None:
+        now = int(time.time())
+        with self.connect() as connection:
+            row = connection.execute("SELECT * FROM ui_jobs WHERE job_id = ?", (job_id,)).fetchone()
+        return self.job_from_row(row, now=now) if row is not None else None
+
+    def job_from_row(self, row: sqlite3.Row, now: int) -> dict[str, Any]:
+        payload = json.loads(row["payload_json"] or "{}")
+        commands = json.loads(row["command_json"] or "[]")
+        started_at = int(row["started_at"] or now)
+        finished_at = int(row["finished_at"] or 0)
+        status = str(row["status"] or "unknown")
+        end_at = finished_at or now
+        job = {
+            "job_id": row["job_id"],
+            "status": status,
+            "started_at": started_at,
+            "finished_at": finished_at,
+            "elapsed_seconds": max(0, end_at - started_at),
+            "command": commands[0] if len(commands) == 1 else commands,
+            "commands": commands,
+            "payload": payload,
+            "returncode": row["returncode"],
+            "log_path": row["log_path"],
+        }
+        if row["action"]:
+            job["action"] = row["action"]
+        if row["sample_id"]:
+            job["sample_id"] = row["sample_id"]
+        return job
+
+
 class WorkflowStore:
     def __init__(self, work_root: Path, catalog_path: Path) -> None:
         self.work_root = work_root.expanduser().resolve()
         self.catalog_path = catalog_path.expanduser().resolve()
         self.job_root = self.work_root / "ui_jobs"
+        self.active_job_ids: set[str] = set()
+        self.job_db = JobDatabase(self.work_root / UI_DB_NAME, self.job_root)
+        self.refresh_stale_jobs()
 
     def catalog(self) -> dict[str, Any]:
         catalog = read_json(self.catalog_path, {})
@@ -139,6 +374,7 @@ class WorkflowStore:
         }
 
     def sample_states(self) -> list[dict[str, Any]]:
+        self.refresh_stale_jobs()
         samples: list[dict[str, Any]] = []
         sample_batches = self.sample_membership()
         if not self.work_root.exists():
@@ -154,6 +390,10 @@ class WorkflowStore:
             review_images = self.review_images(state.get("review_dir"))
             model_file = state.get("downloaded_model", "")
             model_url = self.artifact_url(model_file)
+            ui_job = self.sample_ui_job(state)
+            status = state.get("status", "")
+            if self.sample_status_is_running(status) and ui_job.get("status") == "stale":
+                status = "ui_job_stale"
             samples.append(
                 {
                     "sample_id": sample_id,
@@ -165,10 +405,14 @@ class WorkflowStore:
                     "body_plan": body_plan_value(state),
                     "variant_tags": string_list(state.get("variant_tags")),
                     "armor_state": state.get("armor_state", ""),
-                    "status": state.get("status", ""),
+                    "status": status,
+                    "ui_job": ui_job,
                     "created_at": state.get("created_at", 0),
                     "updated_at": state.get("updated_at", state.get("created_at", 0)),
-                    "face_limit": (state.get("batch_runner") or {}).get("face_limit"),
+                    "face_limit": (state.get("batch_runner") or {}).get("face_limit")
+                    or (state.get("tripo_task_payload") or {}).get("face_limit"),
+                    "tripo_task_id": state.get("tripo_task_id", ""),
+                    "tripo_multiview_task_id": state.get("tripo_multiview_task_id", ""),
                     "batches": sample_batches.get(sample_id, []),
                     "source_images": source_images,
                     "reference_images": reference_images,
@@ -263,26 +507,46 @@ class WorkflowStore:
         return runs[:50]
 
     def jobs(self) -> list[dict[str, Any]]:
-        jobs: list[dict[str, Any]] = []
-        for job_path in sorted(self.job_root.glob("*.json")):
-            job = read_json(job_path, {})
-            if job:
-                jobs.append(job)
-        jobs.sort(key=lambda item: item.get("started_at") or 0, reverse=True)
-        return jobs[:50]
+        self.refresh_stale_jobs()
+        return self.job_db.jobs(limit=50)
 
     def job(self, job_id: str) -> dict[str, Any] | None:
-        path = self.job_root / f"{job_id}.json"
-        if not path.exists():
+        self.refresh_stale_jobs()
+        job = self.job_db.job(job_id)
+        if job is None:
             return None
-        job = read_json(path, {})
-        log_path = self.job_root / f"{job_id}.log"
+        log_path = Path(str(job.get("log_path") or ""))
         if log_path.exists():
             text = log_path.read_text(encoding="utf-8", errors="replace")
             job["log"] = text[-12000:]
         else:
             job["log"] = ""
         return job
+
+    def sample_ui_job(self, state: dict[str, Any]) -> dict[str, Any]:
+        ui_job = state.get("ui_job") if isinstance(state.get("ui_job"), dict) else {}
+        job_id = str(ui_job.get("job_id") or "")
+        if not job_id:
+            return ui_job
+        job = self.job_db.job(job_id)
+        if job is None:
+            return {}
+        return {
+            **ui_job,
+            "status": job.get("status", ui_job.get("status", "")),
+            "started_at": job.get("started_at", ui_job.get("started_at", 0)),
+            "finished_at": job.get("finished_at", ui_job.get("finished_at", 0)),
+            "elapsed_seconds": job.get("elapsed_seconds", 0),
+            "returncode": job.get("returncode"),
+        }
+
+    def refresh_stale_jobs(self) -> None:
+        stale_jobs = self.job_db.mark_stale_jobs(self.active_job_ids, STALE_JOB_SECONDS)
+        for job in stale_jobs:
+            self.finish_sample_job(job)
+
+    def sample_status_is_running(self, status: Any) -> bool:
+        return str(status or "").endswith(RUNNING_SAMPLE_STATUS_SUFFIXES)
 
     def image_map(self, value: Any, fallback_key: str) -> dict[str, str]:
         if isinstance(value, dict):
@@ -359,7 +623,6 @@ class WorkflowStore:
         return path
 
     def start_run_batch(self, payload: dict[str, Any]) -> dict[str, Any]:
-        job_id = uuid.uuid4().hex[:12]
         count = bounded_int(payload.get("count"), 1, 1, 100)
         seed = bounded_int(payload.get("seed"), 0, 0, 999999999)
         face_min = bounded_int(payload.get("faceLimitMin"), 3000, 1, 100000)
@@ -368,7 +631,7 @@ class WorkflowStore:
             face_min, face_max = face_max, face_min
 
         command = [
-            sys.executable,
+            WORKFLOW_PYTHON,
             str(WORKFLOW_SCRIPT),
             "--work-root",
             str(self.work_root),
@@ -399,21 +662,104 @@ class WorkflowStore:
         if payload.get("continueOnError", True):
             command.append("--continue-on-error")
 
+        job_payload = dict(payload)
+        job_payload["action"] = "run-batch"
+        return self.start_job(job_payload, [command])
+
+    def workflow_command(self, *parts: str) -> list[str]:
+        return [WORKFLOW_PYTHON, str(WORKFLOW_SCRIPT), "--work-root", str(self.work_root), *parts]
+
+    def start_sample_action(self, sample_id_value: str, action: str, payload: dict[str, Any]) -> dict[str, Any]:
+        sample_id = safe_token(sample_id_value, "")
+        if not sample_id or sample_id != sample_id_value:
+            raise ValueError("Invalid sample id.")
+        if not (self.work_root / sample_id / "workflow_state.json").exists():
+            raise ValueError(f"Sample not found: {sample_id}")
+
+        commands: list[list[str]]
+        job_payload = dict(payload)
+        job_payload.update({"action": action, "sampleId": sample_id})
+        if action == "generate-reference":
+            command = self.workflow_command("generate-reference", "--sample-id", sample_id)
+            if payload.get("overwrite"):
+                command.append("--overwrite")
+            commands = [command]
+        elif action == "submit-tripo":
+            face_limit = self.face_limit_for_payload(payload)
+            job_payload["faceLimit"] = face_limit
+            commands = [
+                self.workflow_command("submit-tripo", "--sample-id", sample_id, "--face-limit", str(face_limit))
+            ]
+        elif action == "poll-tripo":
+            commands = [self.workflow_command("poll-tripo", "--sample-id", sample_id)]
+        elif action == "prepare-label-work":
+            commands = [self.workflow_command("prepare-label-work", "--sample-id", sample_id)]
+        elif action == "run-pipeline":
+            face_limit = self.face_limit_for_payload(payload)
+            job_payload["faceLimit"] = face_limit
+            commands = [
+                self.workflow_command("generate-reference", "--sample-id", sample_id),
+                self.workflow_command("submit-tripo", "--sample-id", sample_id, "--face-limit", str(face_limit)),
+                self.workflow_command("poll-tripo", "--sample-id", sample_id),
+            ]
+            if payload.get("prepareLabelWork"):
+                commands.append(self.workflow_command("prepare-label-work", "--sample-id", sample_id))
+        else:
+            raise ValueError(f"Unknown sample action: {action}")
+
+        return self.start_job(
+            job_payload,
+            commands,
+            sample_id=sample_id,
+            sample_status=SAMPLE_ACTION_STATUS.get(action, "ui_job_running"),
+        )
+
+    def face_limit_for_payload(self, payload: dict[str, Any]) -> int:
+        default = random.randint(3000, 8000)
+        return bounded_int(payload.get("faceLimit"), default, 1, 100000)
+
+    def start_job(
+        self,
+        payload: dict[str, Any],
+        commands: list[list[str]],
+        sample_id: str = "",
+        sample_status: str = "",
+    ) -> dict[str, Any]:
+        job_id = uuid.uuid4().hex[:12]
         now = int(time.time())
         job = {
             "job_id": job_id,
             "status": "running",
             "started_at": now,
             "finished_at": 0,
-            "command": command,
+            "command": commands[0] if len(commands) == 1 else commands,
+            "commands": commands,
             "payload": payload,
             "returncode": None,
         }
-        write_json(self.job_root / f"{job_id}.json", job)
+        log_path = self.job_root / f"{job_id}.log"
+        self.job_db.insert_job(job, log_path)
+        if sample_id and sample_status:
+            self.mark_sample_job(sample_id, job_id, payload.get("action", ""), sample_status, now)
 
-        thread = threading.Thread(target=self._run_job, args=(job_id, command), daemon=True)
+        self.active_job_ids.add(job_id)
+        thread = threading.Thread(target=self._run_job, args=(job_id, commands), daemon=True)
         thread.start()
         return job
+
+    def mark_sample_job(self, sample_id: str, job_id: str, action: str, status: str, started_at: int) -> None:
+        path = self.work_root / sample_id / "workflow_state.json"
+        state = read_json(path, {})
+        if not state:
+            return
+        state["status"] = status
+        state["ui_job"] = {
+            "job_id": job_id,
+            "action": action,
+            "status": "running",
+            "started_at": started_at,
+        }
+        write_json(path, state)
 
     def create_sample(self, payload: dict[str, Any]) -> dict[str, Any]:
         prompt = str(payload.get("prompt") or "").strip()
@@ -471,8 +817,11 @@ class WorkflowStore:
             return {
                 view: (
                     "Create reference art for one symmetrical four-legged animal intended for Tripo3D mesh "
-                    f"generation. Animal brief: {prompt}. View: {instruction}. Use a neutral standing pose, "
-                    "plain white background, full body visible, animation-ready proportions, and no text."
+                    f"generation. Animal brief: {prompt}. View: {instruction}. Use a Dragon Quest XI-ish bright "
+                    "cel-shaded JRPG creature design with rounded expressive monster proportions, clean "
+                    "anime-inspired silhouettes, saturated heroic-fantasy colors, simple readable materials, and "
+                    "soft toy-like sculptural forms. Use a neutral standing pose, plain white background, full body "
+                    "visible, animation-ready proportions, and no text."
                 )
                 for view, instruction in DEFAULT_VIEW_INSTRUCTIONS.items()
             }
@@ -491,30 +840,73 @@ class WorkflowStore:
             )
         return prompts
 
-    def _run_job(self, job_id: str, command: list[str]) -> None:
+    def _run_job(self, job_id: str, commands: list[list[str]]) -> None:
         log_path = self.job_root / f"{job_id}.log"
-        job_path = self.job_root / f"{job_id}.json"
-        with log_path.open("w", encoding="utf-8") as log:
-            process = subprocess.Popen(
-                command,
-                cwd=str(REPO_ROOT),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                env=os.environ.copy(),
-            )
-            assert process.stdout is not None
-            for line in process.stdout:
-                log.write(line)
-                log.flush()
-            returncode = process.wait()
-        job = read_json(job_path, {})
-        job["status"] = "completed" if returncode == 0 else "failed"
-        job["finished_at"] = int(time.time())
-        job["returncode"] = returncode
-        write_json(job_path, job)
+        returncode = 0
+        status = "completed"
+        try:
+            with log_path.open("w", encoding="utf-8") as log:
+                for index, command in enumerate(commands, start=1):
+                    if len(commands) > 1:
+                        log.write(f"\n[{index}/{len(commands)}] {' '.join(command)}\n")
+                        log.flush()
+                    process = subprocess.Popen(
+                        command,
+                        cwd=str(REPO_ROOT),
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        env=os.environ.copy(),
+                    )
+                    assert process.stdout is not None
+                    for line in process.stdout:
+                        log.write(line)
+                        log.flush()
+                    returncode = process.wait()
+                    if returncode != 0:
+                        status = "failed"
+                        break
+        except Exception as error:
+            status = "failed"
+            returncode = 1
+            with log_path.open("a", encoding="utf-8") as log:
+                log.write(f"\nUI job runner failed: {error}\n")
+        finally:
+            self.active_job_ids.discard(job_id)
+        finished_at = int(time.time())
+        self.job_db.update_job(job_id, status, finished_at, returncode)
+        job = self.job_db.job(job_id) or {
+            "job_id": job_id,
+            "status": status,
+            "finished_at": finished_at,
+            "returncode": returncode,
+        }
+        self.finish_sample_job(job)
+
+    def finish_sample_job(self, job: dict[str, Any]) -> None:
+        payload = job.get("payload") if isinstance(job.get("payload"), dict) else {}
+        sample_id = str(payload.get("sampleId") or "")
+        if not sample_id:
+            return
+        path = self.work_root / sample_id / "workflow_state.json"
+        state = read_json(path, {})
+        if not state:
+            return
+        ui_job = state.get("ui_job") if isinstance(state.get("ui_job"), dict) else {}
+        if ui_job.get("job_id") != job.get("job_id"):
+            return
+        ui_job["status"] = job.get("status", "")
+        ui_job["finished_at"] = job.get("finished_at", 0)
+        ui_job["returncode"] = job.get("returncode")
+        state["ui_job"] = ui_job
+        if self.sample_status_is_running(state.get("status")):
+            if job.get("status") == "failed":
+                state["status"] = "ui_job_failed"
+            elif job.get("status") == "stale":
+                state["status"] = "ui_job_stale"
+        write_json(path, state)
 
 
 class QWalkUIHandler(BaseHTTPRequestHandler):
@@ -572,6 +964,15 @@ class QWalkUIHandler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/samples":
                 sample = self.store.create_sample(payload)
                 self.send_json(sample, status=201)
+            elif parsed.path.startswith("/api/samples/") and "/actions/" in parsed.path:
+                parts = parsed.path.strip("/").split("/")
+                if len(parts) != 5 or parts[0] != "api" or parts[1] != "samples" or parts[3] != "actions":
+                    self.send_error(404, "Not found")
+                    return
+                sample_id = unquote(parts[2])
+                action = unquote(parts[4])
+                job = self.store.start_sample_action(sample_id, action, payload)
+                self.send_json(job, status=202)
             else:
                 self.send_error(404, "Not found")
         except Exception as error:

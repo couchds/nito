@@ -34,6 +34,27 @@ function formatTime(value) {
   return new Date(value * 1000).toLocaleString();
 }
 
+function formatDuration(value) {
+  const seconds = Math.max(0, Number(value || 0));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  if (minutes < 60) return `${minutes}m ${remainingSeconds}s`;
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  return `${hours}h ${remainingMinutes}m`;
+}
+
+function elapsedForJob(job) {
+  if (!job) return 0;
+  if (job.elapsed_seconds !== undefined && job.elapsed_seconds !== null) {
+    return Number(job.elapsed_seconds || 0);
+  }
+  if (!job.started_at) return 0;
+  const end = job.finished_at || Math.floor(Date.now() / 1000);
+  return Math.max(0, end - job.started_at);
+}
+
 function statusClass(value) {
   return `status-${String(value || "unknown").replace(/[^a-zA-Z0-9_-]/g, "_")}`;
 }
@@ -57,6 +78,30 @@ function escapeHtml(value) {
 
 function sampleById(sampleId) {
   return state.samples.find((sample) => sample.sample_id === sampleId);
+}
+
+function isRunning(job) {
+  return job?.status === "running";
+}
+
+function jobActionLabel(value) {
+  const labels = {
+    "run-batch": "Batch",
+    "generate-reference": "Reference images",
+    "submit-tripo": "Tripo model",
+    "poll-tripo": "Model download",
+    "prepare-label-work": "Blender prep",
+    "run-pipeline": "Image + model pipeline",
+  };
+  return labels[value] || labelText(value || "job");
+}
+
+function sampleJobs(sample) {
+  return state.jobs.filter((job) => job.payload?.sampleId === sample.sample_id);
+}
+
+function latestSampleJob(sample) {
+  return sampleJobs(sample)[0] || null;
 }
 
 async function fetchJson(url, options) {
@@ -92,7 +137,11 @@ function render() {
   elements.batchCount.textContent = state.batches.length;
   elements.sampleCount.textContent = state.samples.length;
   elements.jobCount.textContent = state.jobs.length;
-  elements.statusLine.textContent = `${state.batches.length} batches, ${state.samples.length} samples, ${state.jobs.length} UI jobs`;
+  const runningJobs = state.jobs.filter(isRunning).length;
+  const staleJobs = state.jobs.filter((job) => job.status === "stale").length;
+  const runningText = runningJobs ? `, ${runningJobs} running` : "";
+  const staleText = staleJobs ? `, ${staleJobs} stale` : "";
+  elements.statusLine.textContent = `${state.batches.length} batches, ${state.samples.length} samples, ${state.jobs.length} UI jobs${runningText}${staleText}`;
   renderBatches();
   renderBatchDetail();
   renderSamples();
@@ -356,6 +405,179 @@ function promptPanel(sample) {
   `;
 }
 
+function sampleActionPanel(sample) {
+  const jobs = sampleJobs(sample);
+  const activeJob = jobs.find(isRunning);
+  const latestJob = latestSampleJob(sample);
+  const stateJob = sample.ui_job?.job_id ? sample.ui_job : null;
+  const pipeline = pipelineState(sample, activeJob);
+  const statusJob = activeJob || latestJob || stateJob;
+  const nextAction = nextPipelineAction(sample, activeJob);
+  return `
+    <section class="sample-actions">
+      <div class="action-header">
+        <div>
+          <h4>Pipeline</h4>
+          <p class="detail-meta">
+            ${
+              statusJob
+                ? `${escapeHtml(jobActionLabel(statusJob.payload?.action || statusJob.action))} ${escapeHtml(statusJob.status)} for ${escapeHtml(formatDuration(elapsedForJob(statusJob)))}`
+                : "No UI job has run for this sample."
+            }
+          </p>
+        </div>
+        ${statusJob ? `<button type="button" data-job-id="${escapeHtml(statusJob.job_id)}">View Log</button>` : ""}
+      </div>
+      <div class="pipeline-dag" aria-label="Sample pipeline">
+        ${pipeline.map((step, index) => pipelineStep(step, index)).join("")}
+      </div>
+      <div class="next-step-row">
+        <button
+          class="primary-inline-action"
+          type="button"
+          data-sample-id="${escapeHtml(sample.sample_id)}"
+          data-sample-action="${escapeHtml(nextAction.action || "")}"
+          ${nextAction.action ? "" : "disabled"}
+        >
+          ${escapeHtml(nextAction.label)}
+        </button>
+        <span>${escapeHtml(nextAction.detail)}</span>
+      </div>
+      <div class="tag-row">
+        ${activeJob ? tag("running") : ""}
+        ${statusJob?.status === "stale" ? tag("stale") : ""}
+        ${statusJob ? tag(formatDuration(elapsedForJob(statusJob))) : ""}
+        ${latestJob ? tag(`job ${latestJob.job_id}`) : ""}
+        ${sample.ui_job?.action ? tag(sample.ui_job.action) : ""}
+      </div>
+    </section>
+  `;
+}
+
+function hasReferenceSet(sample) {
+  const referenceImages = sample.reference_images || {};
+  return ["front", "left", "right", "back"].every((view) => Boolean(referenceImages[view]));
+}
+
+function activePipelineStage(sample, activeJob) {
+  if (!activeJob) return "";
+  const action = activeJob.payload?.action || "";
+  if (action === "generate-reference") return "reference";
+  if (action === "submit-tripo" || action === "poll-tripo") return "model";
+  if (action === "prepare-label-work") return "blender";
+  if (action === "run-pipeline") {
+    if (!hasReferenceSet(sample)) return "reference";
+    if (!sample.model?.url) return "model";
+    return "blender";
+  }
+  return "";
+}
+
+function pipelineState(sample, activeJob) {
+  const hasRefs = hasReferenceSet(sample);
+  const hasModelTask = Boolean(sample.tripo_task_id);
+  const hasModel = Boolean(sample.model?.url);
+  const hasBlenderFile = Boolean(sample.label_work_blend);
+  const activeStage = activePipelineStage(sample, activeJob);
+  const stepState = (key, complete, ready) => {
+    if (activeStage === key) return "running";
+    if (complete) return "complete";
+    if (ready) return "ready";
+    return "blocked";
+  };
+  return [
+    {
+      key: "sample",
+      title: "Sample",
+      detail: "Prompt saved",
+      state: "complete",
+    },
+    {
+      key: "reference",
+      title: "Reference art",
+      detail: hasRefs ? "4 views ready" : "Front, left, right, back",
+      state: stepState("reference", hasRefs, true),
+    },
+    {
+      key: "model",
+      title: "3D model",
+      detail: hasModel ? "GLB ready" : hasModelTask ? "Task submitted" : "Tripo generation",
+      state: stepState("model", hasModel, hasRefs),
+    },
+    {
+      key: "blender",
+      title: "Blender file",
+      detail: hasBlenderFile ? "Review file ready" : "Prep for annotator",
+      state: stepState("blender", hasBlenderFile, hasModel),
+    },
+    {
+      key: "skeleton",
+      title: "Skeleton",
+      detail: hasBlenderFile ? "Manual placement" : "Waiting on Blender file",
+      state: hasBlenderFile ? "manual" : "blocked",
+    },
+  ];
+}
+
+function pipelineStep(step, index) {
+  return `
+    <div class="pipeline-step-wrap">
+      ${index ? '<span class="pipeline-edge"></span>' : ""}
+      <article class="pipeline-step step-${escapeHtml(step.state)}">
+        <span class="step-state-dot" aria-hidden="true"></span>
+        <div>
+          <strong>${escapeHtml(step.title)}</strong>
+          <span>${escapeHtml(step.detail)}</span>
+        </div>
+        ${tag(step.state)}
+      </article>
+    </div>
+  `;
+}
+
+function nextPipelineAction(sample, activeJob) {
+  if (activeJob) {
+    return {
+      action: "",
+      label: `${jobActionLabel(activeJob.payload?.action)} running`,
+      detail: `${formatDuration(elapsedForJob(activeJob))} elapsed`,
+    };
+  }
+  if (!hasReferenceSet(sample)) {
+    return {
+      action: "generate-reference",
+      label: "Generate Reference Art",
+      detail: "Creates front, left, right, and back views.",
+    };
+  }
+  if (!sample.tripo_task_id && !sample.model?.url) {
+    return {
+      action: "submit-tripo",
+      label: "Generate 3D Model",
+      detail: "Submits the reference views to Tripo.",
+    };
+  }
+  if (sample.tripo_task_id && !sample.model?.url) {
+    return {
+      action: "poll-tripo",
+      label: "Check / Download Model",
+      detail: "Polls the Tripo task and downloads the GLB when ready.",
+    };
+  }
+  if (!sample.label_work_blend) {
+    return {
+      action: "prepare-label-work",
+      label: "Prepare Blender File",
+      detail: "Creates the annotator review file.",
+    };
+  }
+  return {
+    action: "",
+    label: "Ready for Skeleton Placement",
+    detail: "Open the Blender file and place the skeleton manually.",
+  };
+}
+
 function renderSampleDetail() {
   const sample = sampleById(state.selectedSampleId) || state.samples[0];
   if (!sample) {
@@ -379,6 +601,7 @@ function renderSampleDetail() {
       ${batches.length ? batches.map((batchId) => tag(batchId)).join("") : tag("unbatched")}
       ${(sample.variant_tags || []).map((value) => tag(value)).join("")}
     </div>
+    ${sampleActionPanel(sample)}
     ${modelPanel(sample)}
     ${gallery("Source References", sample.source_images, ["reference"])}
     ${gallery("OpenAI References", sample.reference_images, ["front", "left", "right", "back"])}
@@ -401,10 +624,14 @@ function renderJobs() {
             <h3>${escapeHtml(job.job_id)}</h3>
             ${tag(job.status)}
           </div>
-          <p>${formatTime(job.started_at)} | return code ${job.returncode ?? "pending"}</p>
+          <p>${formatTime(job.started_at)} | ${formatDuration(elapsedForJob(job))} | return code ${job.returncode ?? "pending"}</p>
           <div class="tag-row">
-            ${tag(job.payload?.dryRun ? "dry_run" : "live")}
-            ${tag(`${job.payload?.count ?? "?"} samples`)}
+            ${tag(jobActionLabel(job.payload?.action))}
+            ${job.payload?.sampleId ? tag(job.payload.sampleId) : ""}
+            ${job.payload?.count ? tag(`${job.payload.count} samples`) : ""}
+            ${job.payload?.dryRun ? tag("dry_run") : ""}
+            ${job.payload?.faceLimit ? tag(`${job.payload.faceLimit} faces`) : ""}
+            ${job.status === "stale" ? tag("stale") : ""}
           </div>
           <button type="button" data-job-id="${escapeHtml(job.job_id)}">View Log</button>
         </article>
@@ -489,6 +716,20 @@ async function loadJobLog(jobId) {
   elements.jobLog.textContent = job.log || "No output yet.";
 }
 
+async function startSampleAction(sampleId, action) {
+  elements.statusLine.textContent = `Starting ${jobActionLabel(action)}`;
+  const job = await fetchJson(`/api/samples/${encodeURIComponent(sampleId)}/actions/${encodeURIComponent(action)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  state.selectedSampleId = sampleId;
+  state.selectedJobId = job.job_id;
+  await loadState();
+  await loadJobLog(job.job_id);
+  renderSampleDetail();
+}
+
 function switchView(viewName) {
   const activeTab = {
     batchDetail: "batches",
@@ -536,6 +777,24 @@ elements.sampleList.addEventListener("click", (event) => {
   const button = event.target.closest("button[data-sample-id]");
   if (!button) return;
   openSample(button.dataset.sampleId);
+});
+elements.sampleDetail.addEventListener("click", async (event) => {
+  const actionButtonElement = event.target.closest("button[data-sample-action]");
+  if (actionButtonElement) {
+    actionButtonElement.disabled = true;
+    try {
+      await startSampleAction(actionButtonElement.dataset.sampleId, actionButtonElement.dataset.sampleAction);
+    } catch (error) {
+      elements.statusLine.textContent = error.message;
+    } finally {
+      actionButtonElement.disabled = false;
+    }
+    return;
+  }
+  const logButton = event.target.closest("button[data-job-id]");
+  if (!logButton) return;
+  await loadJobLog(logButton.dataset.jobId);
+  switchView("jobs");
 });
 elements.jobList.addEventListener("click", async (event) => {
   const button = event.target.closest("button[data-job-id]");

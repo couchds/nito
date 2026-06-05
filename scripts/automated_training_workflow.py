@@ -314,8 +314,11 @@ def build_view_prompts(catalog: dict[str, Any], spec: dict[str, Any]) -> dict[st
 def fallback_view_prompts(prompt: str) -> dict[str, str]:
     base = (
         "Create clean orthographic reference art for a symmetrical four-legged animal 3D character. "
+        "Use a Dragon Quest XI-ish bright cel-shaded JRPG creature design: rounded expressive monster proportions, "
+        "clean anime-inspired silhouettes, saturated heroic-fantasy colors, simple readable materials, and soft "
+        "toy-like sculptural forms. "
         "Single animal only, centered, neutral standing pose, animation-ready proportions, full body visible, "
-        "plain white background, no text, no labels, no split panels. "
+        "plain white background, no text, no labels, no split panels, no gritty realism, no horror design. "
         f"Character brief: {prompt}"
     )
     view_instructions = {
