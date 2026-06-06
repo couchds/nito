@@ -896,12 +896,14 @@ class WorkflowStore:
         sample_id = safe_token(sample_id_value, "")
         if not sample_id or sample_id != sample_id_value:
             raise ValueError("Invalid sample id.")
-        if not (self.work_root / sample_id / "workflow_state.json").exists():
+        state_file = self.work_root / sample_id / "workflow_state.json"
+        if not state_file.exists():
             raise ValueError(f"Sample not found: {sample_id}")
 
         commands: list[list[str]]
         job_payload = dict(payload)
         job_payload.update({"action": action, "sampleId": sample_id})
+        state = read_json(state_file, {})
         if action == "generate-reference":
             command = self.workflow_command("generate-reference", "--sample-id", sample_id)
             if payload.get("overwrite"):
@@ -944,12 +946,8 @@ class WorkflowStore:
         elif action == "run-pipeline":
             face_limit = self.face_limit_for_payload(payload)
             job_payload["faceLimit"] = face_limit
-            commands = [
-                self.workflow_command("generate-reference", "--sample-id", sample_id),
-                self.workflow_command("submit-tripo", "--sample-id", sample_id, "--face-limit", str(face_limit)),
-                self.workflow_command("poll-tripo", "--sample-id", sample_id),
-            ]
-            if payload.get("prepareLabelWork"):
+            commands = self.pipeline_commands_for_sample(sample_id, state, face_limit)
+            if payload.get("prepareLabelWork") and not self.state_has_label_work_file(state):
                 commands.append(
                     self.workflow_command(
                         "prepare-label-work",
@@ -962,12 +960,59 @@ class WorkflowStore:
         else:
             raise ValueError(f"Unknown sample action: {action}")
 
+        if not commands:
+            raise ValueError("No automated pipeline work is needed for this sample.")
+
         return self.start_job(
             job_payload,
             commands,
             sample_id=sample_id,
             sample_status=SAMPLE_ACTION_STATUS.get(action, "ui_job_running"),
         )
+
+    def pipeline_commands_for_sample(
+        self,
+        sample_id: str,
+        state: dict[str, Any],
+        face_limit: int,
+    ) -> list[list[str]]:
+        """Build an artifact-aware automated pipeline command list."""
+        commands: list[list[str]] = []
+        has_refs = self.state_has_reference_set(state)
+        has_model = self.state_has_downloaded_model(state)
+        has_tripo_task = bool(state.get("tripo_task_id"))
+
+        if has_model:
+            return commands
+
+        if not has_refs and not has_tripo_task:
+            commands.append(self.workflow_command("generate-reference", "--sample-id", sample_id))
+
+        if not has_tripo_task:
+            commands.append(
+                self.workflow_command("submit-tripo", "--sample-id", sample_id, "--face-limit", str(face_limit))
+            )
+        commands.append(self.workflow_command("poll-tripo", "--sample-id", sample_id))
+
+        return commands
+
+    def state_has_reference_set(self, state: dict[str, Any]) -> bool:
+        images = state.get("openai_reference_images")
+        if not isinstance(images, dict):
+            return False
+        return all(self.state_path_exists(images.get(view)) for view in REFERENCE_ORDER)
+
+    def state_has_downloaded_model(self, state: dict[str, Any]) -> bool:
+        return self.state_path_exists(state.get("downloaded_model"))
+
+    def state_has_label_work_file(self, state: dict[str, Any]) -> bool:
+        return self.state_path_exists(state.get("label_work_blend"))
+
+    def state_path_exists(self, value: Any) -> bool:
+        text = str(value or "").strip()
+        if not text:
+            return False
+        return Path(text).expanduser().exists()
 
     def face_limit_for_payload(self, payload: dict[str, Any]) -> int:
         default = random.randint(3000, 8000)

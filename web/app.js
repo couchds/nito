@@ -429,7 +429,7 @@ function jobActionLabel(value) {
     "poll-tripo": "Model download",
     "prepare-label-work": "Blender prep",
     "export-verified": "Verified label export",
-    "run-pipeline": "Image + model pipeline",
+    "run-pipeline": "Automatic pipeline",
   };
   return labels[value] || labelText(value || "job");
 }
@@ -1007,35 +1007,12 @@ function nextPipelineAction(sample, activeJob) {
       detail: `${formatDuration(elapsedForJob(activeJob))} elapsed`,
     };
   }
-  if (!hasReferenceSet(sample)) {
-    return {
-      action: "generate-reference",
-      label: "Generate Reference Art",
-      detail: "Creates front, left, right, and back views.",
-    };
-  }
-  if (!sample.tripo_task_id && !sample.model?.url) {
-    return {
-      action: "submit-tripo",
-      label: "Generate 3D Model",
-      detail: "Submits the reference views to Tripo.",
-    };
-  }
-  if (sample.tripo_task_id && !sample.model?.url) {
-    const hasRemoteModel = Boolean(sample.model?.remote_url);
-    return {
-      action: "poll-tripo",
-      label: hasRemoteModel ? "Download for Blender" : "Check / Download Model",
-      detail: hasRemoteModel
-        ? "Tripo generated the GLB; retry the local download for Blender."
-        : "Polls the Tripo task and downloads the GLB when ready.",
-    };
-  }
   if (!sample.label_work_blend) {
+    const hasAnyMachineArtifact = hasReferenceSet(sample) || sample.tripo_task_id || sample.model?.url || sample.model?.remote_url;
     return {
-      action: "prepare-label-work",
-      label: "Prepare Blender File",
-      detail: "Creates the annotator review file.",
+      action: "run-pipeline",
+      label: hasAnyMachineArtifact ? "Resume Automatic Pipeline" : "Run Automatic Pipeline",
+      detail: "Runs reference art, Tripo generation, model download, and Blender prep, then pauses for skeleton placement.",
     };
   }
   if (isTrainingReadySample(sample)) {
@@ -1237,6 +1214,12 @@ function samplePayload() {
   };
 }
 
+function automaticPipelinePayload() {
+  return {
+    prepareLabelWork: true,
+  };
+}
+
 function batchPayload() {
   const formData = new FormData(elements.runForm);
   return {
@@ -1261,14 +1244,20 @@ async function createSample(event) {
     return;
   }
   elements.createSampleButton.disabled = true;
-  elements.statusLine.textContent = "Creating sample";
+  elements.statusLine.textContent = "Creating sample and starting pipeline";
   try {
     const result = await fetchJson("/api/samples", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(samplePayload()),
     });
+    const job = await fetchJson(`/api/samples/${encodeURIComponent(result.sample_id)}/actions/run-pipeline`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(automaticPipelinePayload()),
+    });
     state.selectedSampleId = result.sample_id;
+    state.selectedJobId = job.job_id;
     await loadState();
     elements.sampleForm.reset();
     elements.sampleMorphologySelect.value = "";
@@ -1276,6 +1265,7 @@ async function createSample(event) {
     renderCreateWizard();
     navigateTo(pagePath("sampleDetail", result.sample_id));
     renderSampleDetail();
+    elements.statusLine.textContent = "Pipeline started. Nito will pause when skeleton placement is ready.";
   } catch (error) {
     elements.statusLine.textContent = error.message;
   } finally {
@@ -1315,7 +1305,7 @@ async function startSampleAction(sampleId, action) {
   const job = await fetchJson(`/api/samples/${encodeURIComponent(sampleId)}/actions/${encodeURIComponent(action)}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({}),
+    body: JSON.stringify(action === "run-pipeline" ? automaticPipelinePayload() : {}),
   });
   state.selectedSampleId = sampleId;
   state.selectedJobId = job.job_id;
