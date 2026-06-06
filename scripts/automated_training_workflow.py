@@ -1338,8 +1338,17 @@ def command_export_verified(args: argparse.Namespace) -> None:
     if args.verified:
         command.append("--verified")
     run(command)
+    export_dir = REPO_ROOT / "data" / "real_quadrupeds" / args.split
+    label_file = export_dir / f"{args.sample_id}.json"
+    mesh_file = export_dir / f"{args.sample_id}.obj"
+    require_created_file(label_file, "Exported label JSON")
+    require_created_file(mesh_file, "Exported label mesh")
     state["status"] = "verified_exported" if args.verified else "candidate_exported"
     state["export_verified"] = bool(args.verified)
+    state["training_eligible"] = bool(args.verified)
+    state["export_split"] = args.split
+    state["export_label"] = str(label_file)
+    state["export_mesh"] = str(mesh_file)
     save_state(args.work_root, args.sample_id, state)
 
 

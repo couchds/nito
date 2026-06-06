@@ -709,22 +709,27 @@ function gallery(title, images, preferredOrder) {
 
 function modelPanel(sample) {
   const model = sample.model || {};
+  const verifiedLabel = sample.verified_label || {};
   const localUrl = model.url || "";
   const remoteUrl = model.remote_url || "";
   const viewerUrl = model.viewer_url || "";
+  const labelUrl = verifiedLabel.url || "";
   const displayUrl = localUrl || remoteUrl || viewerUrl;
   const previewUrl = model.preview_proxy_url || model.preview_url || "";
   const safeDisplayUrl = escapeHtml(displayUrl);
   const safeRemoteUrl = escapeHtml(remoteUrl);
   const safePreviewUrl = escapeHtml(previewUrl);
+  const safeLabelUrl = escapeHtml(labelUrl);
   const fallbackUrl = !localUrl && remoteUrl && viewerUrl && viewerUrl !== remoteUrl ? viewerUrl : "";
   const safeFallbackUrl = escapeHtml(fallbackUrl);
   const displayType = modelType(model, displayUrl);
   const isRemoteOnly = Boolean(remoteUrl && !localUrl);
+  const labelBoneCount = Number(verifiedLabel.bone_count || 0);
   if (!displayUrl) {
     return `
       <h4>3D Model</h4>
       <p class="empty">No downloaded GLB/GLTF model for this sample yet.</p>
+      ${labelUrl ? `<p class="detail-meta">Verified label exported: <a href="${safeLabelUrl}" target="_blank" rel="noreferrer">${escapeHtml(verifiedLabel.name || "label JSON")}</a></p>` : ""}
     `;
   }
   const canEmbed = ["glb", "gltf"].includes(displayType);
@@ -755,6 +760,7 @@ function modelPanel(sample) {
               data-sample-id="${escapeHtml(sample.sample_id)}"
               data-model-src="${safeDisplayUrl}"
               data-fallback-src="${safeFallbackUrl}"
+              data-label-src="${safeLabelUrl}"
               data-poster-src="${safePreviewUrl}"
             >
               <div class="three-toolbar" aria-label="3D model viewport controls">
@@ -763,6 +769,7 @@ function modelPanel(sample) {
                 <button type="button" data-three-action="reset" title="Reset view">Reset</button>
                 <button type="button" data-three-action="grid" title="Toggle grid">Grid</button>
                 <button type="button" data-three-action="wireframe" title="Toggle wireframe">Wire</button>
+                ${labelUrl ? `<button type="button" class="is-active" data-three-action="labels" title="Toggle exported skeleton overlay">Skeleton</button>` : ""}
                 <button type="button" data-three-action="spin" title="Toggle auto rotate">Spin</button>
               </div>
               <div class="three-stage">
@@ -787,10 +794,12 @@ function modelPanel(sample) {
         ${remoteUrl ? `<a href="${safeRemoteUrl}" target="_blank" rel="noreferrer">Source URL</a>` : ""}
         ${viewerUrl && viewerUrl !== displayUrl ? `<a href="${escapeHtml(viewerUrl)}" target="_blank" rel="noreferrer">Proxy URL</a>` : ""}
         ${previewUrl ? `<a href="${safePreviewUrl}" target="_blank" rel="noreferrer">Open Tripo render</a>` : ""}
+        ${labelUrl ? `<a href="${safeLabelUrl}" target="_blank" rel="noreferrer">Open label JSON</a>` : ""}
       </div>
       <p class="detail-meta">
         ${escapeHtml(localUrl ? model.name || model.file : "Remote Tripo GLB")}
         ${isRemoteOnly ? " | browser preview may depend on Tripo CORS" : ""}
+        ${labelUrl ? ` | verified skeleton overlay${labelBoneCount ? ` (${labelBoneCount} bones)` : ""}` : ""}
       </p>
     </div>
   `;

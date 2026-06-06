@@ -16,12 +16,17 @@ class NitoThreeViewport {
     this.sampleId = root.dataset.sampleId || root.dataset.modelSrc || "model";
     this.modelSrc = root.dataset.modelSrc || "";
     this.fallbackSrc = root.dataset.fallbackSrc || "";
+    this.labelSrc = root.dataset.labelSrc || "";
     this.model = null;
+    this.labelGroup = null;
+    this.labelBoneCount = 0;
     this.modelMaterials = [];
     this.frame = null;
     this.meshCount = 0;
     this.disposed = false;
     this.wireframe = false;
+    this.labelsVisible = Boolean(this.labelSrc);
+    this.modelStatus = "";
 
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x090c0c);
@@ -97,6 +102,10 @@ class NitoThreeViewport {
         this.setWireframe(!this.wireframe);
         button.classList.toggle("is-active", this.wireframe);
       }
+      if (action === "labels") {
+        this.setLabelsVisible(!this.labelsVisible);
+        button.classList.toggle("is-active", this.labelsVisible);
+      }
       if (action === "spin") {
         this.controls.autoRotate = !this.controls.autoRotate;
         button.classList.toggle("is-active", this.controls.autoRotate);
@@ -120,6 +129,7 @@ class NitoThreeViewport {
         this.setStatus(index ? "Trying local proxy" : "Loading GLB");
         const gltf = await this.loadGltf(src, timeoutMs, (message) => this.setStatus(message));
         this.setModel(gltf.scene);
+        await this.loadLabelOverlay();
         this.poster?.classList.add("is-hidden");
         return;
       } catch (error) {
@@ -160,6 +170,7 @@ class NitoThreeViewport {
   }
 
   setModel(model) {
+    this.clearLabelOverlay();
     if (this.model) {
       this.scene.remove(this.model);
       this.disposeObject(this.model);
@@ -214,7 +225,8 @@ class NitoThreeViewport {
     };
 
     this.resetView();
-    this.setStatus(`Orbit, pan, and zoom ready (${this.meshCount} mesh${this.meshCount === 1 ? "" : "es"})`);
+    this.modelStatus = `Orbit, pan, and zoom ready (${this.meshCount} mesh${this.meshCount === 1 ? "" : "es"})`;
+    this.setStatus(this.modelStatus);
   }
 
   createVisibleMaterial(originalMaterial) {
@@ -303,6 +315,153 @@ class NitoThreeViewport {
     });
   }
 
+  async loadLabelOverlay() {
+    if (!this.labelSrc || !this.frame) return;
+    try {
+      this.setStatus(`${this.modelStatus || "Model ready"}; loading skeleton labels`);
+      const response = await fetch(this.labelSrc, { cache: "no-store" });
+      if (!response.ok) {
+        throw new Error(`Label JSON returned HTTP ${response.status}`);
+      }
+      const label = await response.json();
+      this.setLabelOverlay(label);
+    } catch (error) {
+      this.clearLabelOverlay();
+      this.setStatus(`${this.modelStatus || "Model ready"}; skeleton labels failed to load`);
+    }
+  }
+
+  setLabelOverlay(label) {
+    this.clearLabelOverlay();
+    const guideBones = label?.guide_bones && typeof label.guide_bones === "object" ? label.guide_bones : {};
+    const bones = Object.entries(guideBones)
+      .map(([name, value]) => ({
+        name,
+        head: this.labelPointToThree(value?.head),
+        tail: this.labelPointToThree(value?.tail),
+      }))
+      .filter((bone) => bone.head && bone.tail && bone.head.distanceToSquared(bone.tail) > 0.000001);
+
+    if (!bones.length) {
+      this.setStatus(`${this.modelStatus || "Model ready"}; label file has no drawable bones`);
+      return;
+    }
+
+    const labelPoints = bones.flatMap((bone) => [bone.head, bone.tail]);
+    const labelBox = new THREE.Box3().setFromPoints(labelPoints);
+    const labelCenter = labelBox.getCenter(new THREE.Vector3());
+    const labelSize = labelBox.getSize(new THREE.Vector3());
+    const targetBox = this.frame.box;
+    const targetCenter = targetBox.getCenter(new THREE.Vector3());
+    const targetSize = targetBox.getSize(new THREE.Vector3());
+    const ratios = ["x", "y", "z"]
+      .map((axis) => (labelSize[axis] > 0.000001 ? targetSize[axis] / labelSize[axis] : 0))
+      .filter((value) => Number.isFinite(value) && value > 0);
+    const labelScale = (ratios.length ? Math.min(...ratios) : 1) * 0.94;
+    const targetRadius = Math.max(targetSize.length(), 1);
+    const boneRadius = THREE.MathUtils.clamp(targetRadius * 0.006, 0.012, 0.04);
+    const jointRadius = boneRadius * 2.15;
+    const jointPoints = [];
+
+    const transformPoint = (point) => point.clone().sub(labelCenter).multiplyScalar(labelScale).add(targetCenter);
+    const group = new THREE.Group();
+    group.name = "NitoVerifiedSkeletonOverlay";
+    group.visible = this.labelsVisible;
+
+    bones.forEach((bone) => {
+      const start = transformPoint(bone.head);
+      const end = transformPoint(bone.tail);
+      jointPoints.push(start, end);
+      const color = this.labelBoneColor(bone.name);
+      group.add(this.createBoneCylinder(start, end, boneRadius, color));
+    });
+
+    const sphereGeometry = new THREE.SphereGeometry(jointRadius, 16, 10);
+    const jointMaterial = new THREE.MeshBasicMaterial({
+      color: 0xfff4de,
+      depthTest: false,
+      transparent: true,
+      opacity: 0.96,
+    });
+    this.uniquePoints(jointPoints).forEach((point) => {
+      const joint = new THREE.Mesh(sphereGeometry, jointMaterial);
+      joint.position.copy(point);
+      joint.renderOrder = 12;
+      group.add(joint);
+    });
+
+    this.labelGroup = group;
+    this.labelBoneCount = bones.length;
+    this.scene.add(group);
+    this.setStatus(
+      `${this.modelStatus || "Model ready"}${this.labelsVisible ? ` + skeleton overlay (${bones.length} bones)` : ""}`,
+    );
+  }
+
+  labelPointToThree(value) {
+    if (!Array.isArray(value) || value.length < 3) return null;
+    const [x, y, z] = value.map((item) => Number(item));
+    if (![x, y, z].every(Number.isFinite)) return null;
+    return new THREE.Vector3(x, z, y);
+  }
+
+  labelBoneColor(name) {
+    if (name.includes("_left_")) return 0x62d0c4;
+    if (name.includes("_right_")) return 0xf0b35f;
+    if (name.includes("tail")) return 0x9c8cff;
+    if (name.includes("head") || name.includes("neck")) return 0xfff4de;
+    return 0xd2a75f;
+  }
+
+  createBoneCylinder(start, end, radius, color) {
+    const direction = end.clone().sub(start);
+    const length = direction.length();
+    const geometry = new THREE.CylinderGeometry(radius, radius, length, 14, 1, false);
+    const material = new THREE.MeshBasicMaterial({
+      color,
+      depthTest: false,
+      transparent: true,
+      opacity: 0.92,
+    });
+    const cylinder = new THREE.Mesh(geometry, material);
+    cylinder.position.copy(start).add(end).multiplyScalar(0.5);
+    cylinder.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction.normalize());
+    cylinder.renderOrder = 11;
+    return cylinder;
+  }
+
+  uniquePoints(points) {
+    const seen = new Set();
+    const unique = [];
+    points.forEach((point) => {
+      const key = point.toArray().map((value) => value.toFixed(4)).join(",");
+      if (seen.has(key)) return;
+      seen.add(key);
+      unique.push(point);
+    });
+    return unique;
+  }
+
+  setLabelsVisible(enabled) {
+    this.labelsVisible = enabled;
+    if (this.labelGroup) {
+      this.labelGroup.visible = enabled;
+      this.setStatus(
+        `${this.modelStatus || "Model ready"}${enabled && this.labelBoneCount ? ` + skeleton overlay (${this.labelBoneCount} bones)` : ""}`,
+      );
+    } else if (enabled && this.labelSrc) {
+      this.loadLabelOverlay();
+    }
+  }
+
+  clearLabelOverlay() {
+    this.labelBoneCount = 0;
+    if (!this.labelGroup) return;
+    this.scene.remove(this.labelGroup);
+    this.disposeObject(this.labelGroup);
+    this.labelGroup = null;
+  }
+
   resize() {
     const bounds = this.host.getBoundingClientRect();
     const width = Math.max(1, Math.floor(bounds.width));
@@ -340,6 +499,7 @@ class NitoThreeViewport {
     this.rememberCamera();
     this.resizeObserver?.disconnect();
     this.controls?.dispose();
+    this.clearLabelOverlay();
     if (this.model) this.disposeObject(this.model);
     this.renderer?.dispose();
     this.renderer?.domElement?.remove();

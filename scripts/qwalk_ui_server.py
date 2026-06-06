@@ -34,6 +34,7 @@ IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 MODEL_EXTENSIONS = {".glb", ".gltf"}
 REFERENCE_ORDER = ("front", "left", "right", "back")
 REVIEW_ORDER = ("front", "left", "right", "rear", "top", "quarter")
+LABEL_SPLITS = ("train", "val", "test")
 STALE_JOB_SECONDS = 15 * 60
 DEFAULT_COMMAND_TIMEOUT_SECONDS = 30 * 60
 COMMAND_TIMEOUT_SECONDS = {
@@ -424,6 +425,58 @@ class WorkflowStore:
             "specs": specs,
         }
 
+    def exported_label_path(self, state: dict[str, Any], sample_id: str) -> Path | None:
+        candidates: list[Path] = []
+        explicit_label = str(state.get("export_label") or "").strip()
+        if explicit_label:
+            candidates.append(Path(explicit_label).expanduser())
+
+        preferred_split = str(state.get("export_split") or "train").strip() or "train"
+        for split in [preferred_split, *[item for item in LABEL_SPLITS if item != preferred_split]]:
+            candidates.append(REPO_ROOT / "data" / "real_quadrupeds" / split / f"{sample_id}.json")
+
+        seen: set[Path] = set()
+        for candidate in candidates:
+            try:
+                path = candidate.resolve()
+            except OSError:
+                continue
+            if path in seen:
+                continue
+            seen.add(path)
+            if path.is_file():
+                return path
+        return None
+
+    def exported_label_payload(self, state: dict[str, Any], sample_id: str) -> dict[str, Any]:
+        label_path = self.exported_label_path(state, sample_id)
+        if not label_path:
+            return {}
+
+        label_data = read_json(label_path, {})
+        if not isinstance(label_data, dict):
+            label_data = {}
+        guide_bones = label_data.get("guide_bones", {})
+        if not isinstance(guide_bones, dict):
+            guide_bones = {}
+
+        mesh_value = str(state.get("export_mesh") or label_data.get("mesh_file") or "").strip()
+        mesh_path = Path(mesh_value).expanduser() if mesh_value else label_path.with_suffix(".obj")
+        mesh_url = self.artifact_url(str(mesh_path)) if mesh_path.exists() else ""
+        split = str(label_data.get("split") or state.get("export_split") or label_path.parent.name or "").strip()
+
+        return {
+            "file": str(label_path),
+            "name": label_path.name,
+            "url": self.artifact_url(str(label_path)),
+            "mesh_file": str(mesh_path) if mesh_path.exists() else "",
+            "mesh_url": mesh_url,
+            "split": split,
+            "verified": bool(label_data.get("verified_label", state.get("export_verified", False))),
+            "training_eligible": bool(label_data.get("training_eligible", state.get("training_eligible", False))),
+            "bone_count": len(guide_bones),
+        }
+
     def sample_states(self) -> list[dict[str, Any]]:
         self.refresh_stale_jobs()
         samples: list[dict[str, Any]] = []
@@ -453,6 +506,7 @@ class WorkflowStore:
                 label_schema,
                 body_plan,
             )
+            verified_label = self.exported_label_payload(state, sample_id)
             samples.append(
                 {
                     "sample_id": sample_id,
@@ -468,6 +522,7 @@ class WorkflowStore:
                     "status": status,
                     "export_verified": bool(state.get("export_verified", False)),
                     "training_eligible": bool(state.get("training_eligible", False)),
+                    "verified_label": verified_label,
                     "ui_job": ui_job,
                     "created_at": state.get("created_at", 0),
                     "updated_at": state.get("updated_at", state.get("created_at", 0)),

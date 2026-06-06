@@ -1639,6 +1639,14 @@ textarea:focus {
   transform: none;
 }
 
+.three-toolbar button[data-three-action="labels"].is-active {
+  border-color: rgba(98, 208, 196, 0.62);
+  background:
+    linear-gradient(135deg, rgba(98, 208, 196, 0.24), rgba(183, 138, 69, 0.22)),
+    rgba(247, 239, 224, 0.08);
+  color: #fffaf0;
+}
+
 .three-stage {
   position: relative;
   width: 100%;
