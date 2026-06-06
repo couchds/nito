@@ -41,6 +41,7 @@ COMMAND_TIMEOUT_SECONDS = {
     "submit-tripo": 10 * 60,
     "poll-tripo": 20 * 60,
     "prepare-label-work": 15 * 60,
+    "export-verified": 15 * 60,
     "run-batch": 60 * 60,
 }
 RUNNING_SAMPLE_STATUS_SUFFIXES = ("running", "polling")
@@ -49,6 +50,7 @@ SAMPLE_ACTION_STATUS = {
     "submit-tripo": "tripo_submission_running",
     "poll-tripo": "tripo_polling",
     "prepare-label-work": "label_work_running",
+    "export-verified": "verified_export_running",
     "run-pipeline": "pipeline_running",
 }
 DEFAULT_VIEW_INSTRUCTIONS = {
@@ -863,6 +865,22 @@ class WorkflowStore:
                     self.blender_path(),
                 )
             ]
+        elif action == "export-verified":
+            split = str(payload.get("split") or "train").strip() or "train"
+            if split not in {"train", "val", "test"}:
+                raise ValueError("Export split must be train, val, or test.")
+            commands = [
+                self.workflow_command(
+                    "export-verified",
+                    "--sample-id",
+                    sample_id,
+                    "--blender",
+                    self.blender_path(),
+                    "--split",
+                    split,
+                    "--verified",
+                )
+            ]
         elif action == "run-pipeline":
             face_limit = self.face_limit_for_payload(payload)
             job_payload["faceLimit"] = face_limit
@@ -940,6 +958,8 @@ class WorkflowStore:
 
     def inferred_sample_status(self, state: dict[str, Any]) -> str:
         reference_images = state.get("openai_reference_images")
+        if state.get("export_verified") or state.get("status") == "verified_exported":
+            return "verified_exported"
         if state.get("label_work_blend"):
             return "label_work_prepared"
         if state.get("downloaded_model"):

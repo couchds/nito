@@ -1183,7 +1183,7 @@ textarea:focus {
 
 .pipeline-dag {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 0;
   align-items: stretch;
   margin-top: 14px;
@@ -1378,6 +1378,34 @@ textarea:focus {
 .next-step-row.is-running span {
   color: var(--amber);
   font-weight: 650;
+}
+
+.final-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px dashed rgba(183, 138, 69, 0.45);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(210, 167, 95, 0.16), rgba(255, 252, 244, 0.62));
+}
+
+.final-action-row button {
+  min-height: 36px;
+  padding: 0 12px;
+  border-color: rgba(183, 138, 69, 0.58);
+  background: rgba(255, 252, 244, 0.78);
+  color: var(--night);
+  font-weight: 720;
+}
+
+.final-action-row span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
 }
 
 @keyframes spin-rune {

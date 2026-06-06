@@ -221,7 +221,7 @@ Blender label-work files are normalized to a canonical frame before guide fittin
 .\.venv\Scripts\python.exe scripts\automated_training_workflow.py prepare-label-work --sample-id auto_horse_000 --profile HORSE --mesh-forward-axis POS_X
 ```
 
-After the review images pass the gold-label skill checklist, export the corrected guide:
+After the review images pass the gold-label skill checklist, export the corrected guide from the sample page with **Export Verified Label**, or run the same step from PowerShell:
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\automated_training_workflow.py export-verified --sample-id auto_horse_000 --verified

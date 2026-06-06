@@ -428,6 +428,7 @@ function jobActionLabel(value) {
     "submit-tripo": "Tripo model",
     "poll-tripo": "Model download",
     "prepare-label-work": "Blender prep",
+    "export-verified": "Verified label export",
     "run-pipeline": "Image + model pipeline",
   };
   return labels[value] || labelText(value || "job");
@@ -447,6 +448,7 @@ function jobSupersededByArtifacts(sample, job) {
   if (action === "prepare-label-work" && sample.label_work_blend) return true;
   if (action === "poll-tripo" && sample.model?.url) return true;
   if (action === "generate-reference" && hasReferenceSet(sample)) return true;
+  if (action === "export-verified" && isTrainingReadySample(sample)) return true;
   return false;
 }
 
@@ -863,6 +865,7 @@ function sampleActionPanel(sample) {
         </button>
         <span>${escapeHtml(nextAction.detail)}</span>
       </div>
+      ${verifiedExportAction(sample, activeJob)}
       ${
         statusJob?.status === "stale"
           ? `<div class="stale-callout">
@@ -896,6 +899,7 @@ function activePipelineStage(sample, activeJob) {
   if (action === "generate-reference") return "reference";
   if (action === "submit-tripo" || action === "poll-tripo") return "model";
   if (action === "prepare-label-work") return "blender";
+  if (action === "export-verified") return "export";
   if (action === "run-pipeline") {
     if (!hasReferenceSet(sample)) return "reference";
     if (!sample.model?.url) return "model";
@@ -910,6 +914,7 @@ function pipelineState(sample, activeJob) {
   const hasRemoteModel = Boolean(sample.model?.remote_url);
   const hasModel = Boolean(sample.model?.url);
   const hasBlenderFile = Boolean(sample.label_work_blend);
+  const isVerified = isTrainingReadySample(sample);
   const schema = skeletonSchemaForSample(sample);
   const activeStage = activePipelineStage(sample, activeJob);
   const stepState = (key, complete, ready) => {
@@ -947,11 +952,19 @@ function pipelineState(sample, activeJob) {
       key: "skeleton",
       title: "Skeleton",
       detail: hasBlenderFile
-        ? `${schema?.label || "Schema"} placement`
+        ? isVerified
+          ? "Guide exported"
+          : `${schema?.label || "Schema"} placement`
         : schema
           ? `${schema.label} waiting`
           : "Waiting on Blender file",
-      state: hasBlenderFile ? "manual" : "blocked",
+      state: isVerified ? "complete" : hasBlenderFile ? "manual" : "blocked",
+    },
+    {
+      key: "export",
+      title: "Verified label",
+      detail: isVerified ? "Ready for training" : "Export after saving Blender edits",
+      state: stepState("export", isVerified, hasBlenderFile),
     },
   ];
 }
@@ -1011,11 +1024,34 @@ function nextPipelineAction(sample, activeJob) {
       detail: "Creates the annotator review file.",
     };
   }
+  if (isTrainingReadySample(sample)) {
+    return {
+      action: "",
+      label: "Ready for Training",
+      detail: "Verified label export is complete.",
+    };
+  }
   return {
     action: "open-blender",
     label: "Open in Blender",
     detail: "Launch the label-work file and place the skeleton manually.",
   };
+}
+
+function verifiedExportAction(sample, activeJob) {
+  if (activeJob || !sample.label_work_blend || isTrainingReadySample(sample)) return "";
+  return `
+    <div class="final-action-row">
+      <button
+        type="button"
+        data-sample-id="${escapeHtml(sample.sample_id)}"
+        data-sample-action="export-verified"
+      >
+        Export Verified Label
+      </button>
+      <span>Use this after saving the corrected guide in Blender.</span>
+    </div>
+  `;
 }
 
 function sampleDetailKey(sample) {
