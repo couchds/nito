@@ -37,7 +37,7 @@ REVIEW_ORDER = ("front", "left", "right", "rear", "top", "quarter")
 STALE_JOB_SECONDS = 15 * 60
 DEFAULT_COMMAND_TIMEOUT_SECONDS = 30 * 60
 COMMAND_TIMEOUT_SECONDS = {
-    "generate-reference": 10 * 60,
+    "generate-reference": 30 * 60,
     "submit-tripo": 10 * 60,
     "poll-tripo": 20 * 60,
     "prepare-label-work": 15 * 60,

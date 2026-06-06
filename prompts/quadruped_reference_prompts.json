@@ -6,6 +6,7 @@
     "image_quality": "medium",
     "background": "opaque",
     "output_format": "png",
+    "reference_strategy": "sequential",
     "style_notes": "Dragon Quest XI-ish bright cel-shaded JRPG creature design, rounded expressive monster proportions, clean anime-inspired silhouette language, saturated heroic-fantasy colors, simple readable materials, soft toy-like sculptural forms, orthographic model-sheet lighting, animation-ready proportions, symmetrical anatomy, clear silhouette, full body visible, centered on a plain white background",
     "negative_notes": "no text, no labels, no watermark, no ground grid, no dramatic perspective, no cropped limbs, no extra characters, no duplicate animal, no action pose, no gritty realism, no horror design, no hyperreal fur"
   },

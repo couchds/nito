@@ -7,7 +7,7 @@ The repo still includes the QWalk Blender add-on that powers the manual rigging 
 ## Nito Workflow
 
 1. Create a sample from a prompt or from the quadruped prompt catalog.
-2. Generate front, left, right, and back reference art with OpenAI image generation.
+2. Generate left, right, front, and back reference art with OpenAI image generation, passing earlier views into later views for consistency.
 3. Submit the generated views to Tripo3D to create a 3D model.
 4. Open the prepared Blender file and place or correct the skeleton guides manually.
 5. Export verified labels for future model training.
@@ -159,7 +159,7 @@ For repeatable real-label creation, use the repo-local Codex skill at `skills/qw
 The `scripts/automated_training_workflow.py` script scaffolds Nito's end-to-end real-data pipeline:
 
 1. Create one or more catalog-backed sample specs.
-2. Generate front/left/right/back reference art with OpenAI `gpt-image-2`.
+2. Generate left/right/front/back reference art with OpenAI `gpt-image-2`, using earlier views as image references for later views.
 3. Submit a multiview-to-model task to Tripo3D from those generated views.
 4. Poll and download the generated model before Tripo result URLs expire.
 5. Import the model into Blender.
@@ -188,7 +188,7 @@ $sampleId = "paste_created_sample_id_here"
 
 `init-batch` samples from the prompt catalog and creates resumable per-sample state. Use `--animal-type dog` or `--armor-state armored` to restrict the random choices. The sample IDs include the current timestamp; copy the actual IDs from command output.
 
-`generate-reference` calls OpenAI once for each requested view and stores `front`, `left`, `right`, and `back` images under the sample's `reference/` directory. By default it uses the catalog image settings, currently `gpt-image-2`, `1024x1024`, `medium`, opaque PNG output.
+`generate-reference` uses sequential model-sheet generation by default. It generates the left profile from text, generates the right profile from the left image, generates the front view from the left and right images, then generates the back view from the previous three images. The resulting `front`, `left`, `right`, and `back` images are stored under the sample's `reference/` directory. By default it uses the catalog image settings, currently `gpt-image-2`, `1024x1024`, `medium`, opaque PNG output. Use `--reference-strategy independent` when you want separate text-only generations for debugging.
 
 `submit-tripo` uploads the generated OpenAI view images to Tripo3D and submits `multiview_to_model` in Tripo's required order: front, left, back, right. The `--face-limit` value can be randomized by callers; values from 3000 to 8000 are the intended training range.
 

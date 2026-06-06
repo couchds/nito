@@ -33,6 +33,8 @@ DEFAULT_BLENDER = r"C:\Program Files (x86)\Steam\steamapps\common\Blender\blende
 DEFAULT_TRIPO_MESH_FORWARD_AXIS = "POS_X"
 MODEL_EXTENSIONS = (".glb", ".gltf", ".obj", ".fbx", ".zip")
 REFERENCE_VIEWS = ("front", "left", "right", "back")
+REFERENCE_STRATEGIES = ("sequential", "independent")
+SEQUENTIAL_REFERENCE_VIEWS = ("left", "right", "front", "back")
 TRIPO_VIEW_ORDER = ("front", "left", "back", "right")
 LEGACY_BODY_PLAN_ALIASES = {
     "canid": "medium_quadruped",
@@ -88,6 +90,12 @@ def parse_args() -> argparse.Namespace:
     run_batch.add_argument("--background", default="", choices=("", "opaque", "transparent", "auto"))
     run_batch.add_argument("--output-format", default="", choices=("", "png", "jpeg", "webp"))
     run_batch.add_argument("--reference-views", default="all")
+    run_batch.add_argument(
+        "--reference-strategy",
+        default="",
+        choices=("", *REFERENCE_STRATEGIES),
+        help="Defaults to catalog reference_strategy or sequential.",
+    )
     run_batch.add_argument("--overwrite-reference", action="store_true")
     run_batch.add_argument("--tripo-api-key", default="", help="Tripo3D API key. Defaults to TRIPO_API_KEY.")
     run_batch.add_argument("--tripo-base-url", default=DEFAULT_TRIPO_BASE_URL)
@@ -124,6 +132,12 @@ def parse_args() -> argparse.Namespace:
         "--views",
         default="all",
         help="Comma-separated subset of front,left,right,back, or all.",
+    )
+    reference_generate.add_argument(
+        "--reference-strategy",
+        default="",
+        choices=("", *REFERENCE_STRATEGIES),
+        help="Use sequential image edits for consistent views, or independent generations.",
     )
     reference_generate.add_argument("--overwrite", action="store_true")
 
@@ -335,6 +349,86 @@ def parse_reference_views(value: str) -> list[str]:
     return views
 
 
+def parse_reference_strategy(value: str) -> str:
+    strategy = value.strip().lower()
+    if not strategy:
+        return "sequential"
+    if strategy not in REFERENCE_STRATEGIES:
+        raise RuntimeError(f"Unknown reference strategy: {value}")
+    return strategy
+
+
+def reference_generation_order(views: list[str], strategy: str) -> list[str]:
+    if strategy == "sequential":
+        return [view for view in SEQUENTIAL_REFERENCE_VIEWS if view in views]
+    return views
+
+
+def prior_reference_views(view: str, images: dict[str, str], strategy: str) -> list[str]:
+    if strategy != "sequential":
+        return []
+    if view not in SEQUENTIAL_REFERENCE_VIEWS:
+        return []
+    view_index = SEQUENTIAL_REFERENCE_VIEWS.index(view)
+    prior_views = SEQUENTIAL_REFERENCE_VIEWS[:view_index]
+    return [prior_view for prior_view in prior_views if images.get(prior_view)]
+
+
+def tail_constraint_for_state(state: dict[str, Any]) -> str:
+    tags = state.get("variant_tags")
+    tag_set = {str(tag).strip().lower() for tag in tags} if isinstance(tags, list) else set()
+    body_plan = str(state.get("morphology_type") or state.get("body_plan") or "").strip().lower()
+    animal_type = str(state.get("animal_type") or "").strip().lower()
+    prompt = str(state.get("prompt") or "").strip().lower()
+
+    if "long_tail" in tag_set or "long tail" in prompt:
+        return "The animal has a clearly visible long tail; preserve the same tail length, attachment point, and silhouette in every view."
+    if "short_tail" in tag_set or "short tail" in prompt:
+        return "The animal has only a short tail or tail stub; do not turn it into a long tail in later views."
+    if body_plan in {"hind_leg_dominant", "shell_reptile"} or animal_type in {"frog", "turtle"}:
+        return "Do not add a visible mammal-like tail; use no tail or only a tiny anatomy-appropriate tail stub."
+    return "Do not add, remove, lengthen, or shorten the tail between views; keep appendages exactly consistent with the prompt."
+
+
+def effective_reference_prompt(
+    *,
+    base_prompt: str,
+    view: str,
+    prior_views: list[str],
+    strategy: str,
+    state: dict[str, Any],
+) -> str:
+    tail_rule = tail_constraint_for_state(state)
+    consistency_rules = [
+        tail_rule,
+        "Use the same creature identity, body proportions, equipment, markings, material colors, and silhouette across all views.",
+        "Keep the pose neutral and orthographic for clean Tripo3D reconstruction.",
+        "Do not invent new horns, ears, paws, armor plates, tails, accessories, or secondary animals in later views.",
+    ]
+    if strategy != "sequential":
+        return f"{base_prompt} Consistency constraints: {' '.join(consistency_rules)}"
+
+    if not prior_views:
+        lead_in = (
+            "This is the canonical first model-sheet view. Establish the final creature design clearly, "
+            "because later views will use this image as identity reference."
+        )
+    else:
+        prior_text = ", ".join(prior_views)
+        lead_in = (
+            f"Use the attached {prior_text} reference image(s) as the source of truth for this {view} view. "
+            "Match the exact same creature rather than redesigning it."
+        )
+    if view == "right":
+        lead_in += " This should read as the opposite side of the left profile, with mirrored proportions and no new anatomy."
+    elif view == "front":
+        lead_in += " Reconcile the left and right profiles into a centered front view with matching width and limb placement."
+    elif view == "back":
+        lead_in += " Reconcile all previous views into a centered rear view with matching width, tail treatment, and equipment."
+
+    return f"{base_prompt} Sequential consistency instructions: {lead_in} {' '.join(consistency_rules)}"
+
+
 def request_json(
     method: str,
     url: str,
@@ -355,6 +449,72 @@ def request_json(
         detail = error.read().decode("utf-8", errors="replace")
         raise RuntimeError(f"{method} {url} failed with HTTP {error.code}: {detail}") from error
     return json.loads(text)
+
+
+def mime_type_for_path(path: Path) -> str:
+    return {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".webp": "image/webp",
+    }.get(path.suffix.lower(), "application/octet-stream")
+
+
+def multipart_openai_image_edit(
+    *,
+    base_url: str,
+    key: str,
+    fields: dict[str, Any],
+    image_paths: list[Path],
+    image_field_name: str = "image[]",
+) -> dict[str, Any]:
+    boundary = f"----nito{uuid.uuid4().hex}"
+    parts: list[bytes] = []
+
+    for name, value in fields.items():
+        if value is None or value == "":
+            continue
+        parts.extend(
+            [
+                f"--{boundary}\r\n".encode("utf-8"),
+                f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode("utf-8"),
+                str(value).encode("utf-8"),
+                b"\r\n",
+            ]
+        )
+
+    for image_path in image_paths:
+        resolved = image_path.expanduser().resolve()
+        if not resolved.exists():
+            raise FileNotFoundError(f"OpenAI reference image does not exist: {resolved}")
+        parts.extend(
+            [
+                f"--{boundary}\r\n".encode("utf-8"),
+                (
+                    f'Content-Disposition: form-data; name="{image_field_name}"; '
+                    f'filename="{resolved.name}"\r\nContent-Type: {mime_type_for_path(resolved)}\r\n\r\n'
+                ).encode("utf-8"),
+                resolved.read_bytes(),
+                b"\r\n",
+            ]
+        )
+
+    parts.append(f"--{boundary}--\r\n".encode("utf-8"))
+    request = urllib.request.Request(
+        f"{base_url.rstrip('/')}/images/edits",
+        data=b"".join(parts),
+        headers={
+            "Authorization": f"Bearer {key}",
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=600.0) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as error:
+        detail = error.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"OpenAI image edit failed with HTTP {error.code}: {detail}") from error
 
 
 def image_extension_for_format(output_format: str) -> str:
@@ -393,6 +553,7 @@ def generate_openai_image(
     quality: str,
     output_format: str,
     background: str,
+    reference_images: list[Path] | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "model": model,
@@ -404,6 +565,24 @@ def generate_openai_image(
     }
     if background:
         payload["background"] = background
+    if reference_images:
+        try:
+            return multipart_openai_image_edit(
+                base_url=base_url,
+                key=key,
+                fields=payload,
+                image_paths=reference_images,
+            )
+        except RuntimeError as error:
+            if "HTTP 400" not in str(error):
+                raise
+            return multipart_openai_image_edit(
+                base_url=base_url,
+                key=key,
+                fields=payload,
+                image_paths=reference_images,
+                image_field_name="image",
+            )
     return request_json(
         "POST",
         f"{base_url.rstrip('/')}/images/generations",
@@ -416,13 +595,7 @@ def generate_openai_image(
 def upload_file(base_url: str, key: str, path: Path) -> dict[str, Any]:
     boundary = f"----qwalk{uuid.uuid4().hex}"
     data = path.read_bytes()
-    suffix = path.suffix.lower()
-    content_type = {
-        ".png": "image/png",
-        ".jpg": "image/jpeg",
-        ".jpeg": "image/jpeg",
-        ".webp": "image/webp",
-    }.get(suffix, "application/octet-stream")
+    content_type = mime_type_for_path(path)
     parts = [
         f"--{boundary}\r\n".encode("utf-8"),
         (
@@ -785,6 +958,7 @@ def command_run_batch(args: argparse.Namespace) -> None:
                     background=args.background,
                     output_format=args.output_format,
                     views=args.reference_views,
+                    reference_strategy=args.reference_strategy,
                     overwrite=args.overwrite_reference,
                 )
             )
@@ -884,11 +1058,17 @@ def command_generate_reference(args: argparse.Namespace) -> None:
     output_format = args.output_format or defaults.get("output_format") or "png"
     background = args.background or defaults.get("background") or "opaque"
     views = parse_reference_views(args.views)
+    strategy_arg = getattr(args, "reference_strategy", "")
+    strategy = parse_reference_strategy(strategy_arg or str(defaults.get("reference_strategy") or ""))
+    generation_order = reference_generation_order(views, strategy)
 
-    prompts = state.get("openai_reference_prompts")
-    if not isinstance(prompts, dict):
-        prompts = fallback_view_prompts(state["prompt"])
-        state["openai_reference_prompts"] = prompts
+    base_prompts = state.get("openai_reference_base_prompts")
+    if not isinstance(base_prompts, dict):
+        base_prompts = state.get("openai_reference_prompts")
+    if not isinstance(base_prompts, dict):
+        base_prompts = fallback_view_prompts(state["prompt"])
+    state["openai_reference_base_prompts"] = base_prompts
+    effective_prompts = dict(base_prompts)
 
     reference_dir = sample_dir(args.work_root, args.sample_id) / "reference"
     images = dict(state.get("openai_reference_images", {})) if isinstance(state.get("openai_reference_images"), dict) else {}
@@ -898,36 +1078,56 @@ def command_generate_reference(args: argparse.Namespace) -> None:
         else {}
     )
 
-    for view in views:
+    for view in generation_order:
         output = reference_dir / f"{view}{image_extension_for_format(output_format)}"
+        prompt = base_prompts.get(view)
+        if not isinstance(prompt, str) or not prompt:
+            raise RuntimeError(f"No OpenAI prompt available for view: {view}")
+
+        prior_views = prior_reference_views(view, images, strategy)
+        prior_images = [Path(images[prior_view]).expanduser().resolve() for prior_view in prior_views]
+        effective_prompt = effective_reference_prompt(
+            base_prompt=prompt,
+            view=view,
+            prior_views=prior_views,
+            strategy=strategy,
+            state=state,
+        )
+        effective_prompts[view] = effective_prompt
         if output.exists() and not args.overwrite:
             images[view] = str(output)
             print(f"Skipping existing {view} reference: {output}")
             continue
 
-        prompt = prompts.get(view)
-        if not isinstance(prompt, str) or not prompt:
-            raise RuntimeError(f"No OpenAI prompt available for view: {view}")
         response = generate_openai_image(
             base_url=args.base_url,
             key=key,
             model=str(model),
-            prompt=prompt,
+            prompt=effective_prompt,
             size=str(size),
             quality=str(quality),
             output_format=str(output_format),
             background=str(background),
+            reference_images=prior_images,
         )
         data = response.get("data")
         if not isinstance(data, list) or not data or not isinstance(data[0], dict):
             raise RuntimeError(f"Unexpected OpenAI image response: {response}")
         save_openai_image_item(data[0], output)
         images[view] = str(output)
-        responses[view] = redacted_openai_response(response)
-        print(f"Generated {view} reference: {output}")
+        responses[view] = {
+            "strategy": strategy,
+            "reference_inputs": [str(path) for path in prior_images],
+            "response": redacted_openai_response(response),
+        }
+        if prior_images:
+            print(f"Generated {view} reference from {len(prior_images)} prior image(s): {output}")
+        else:
+            print(f"Generated {view} reference: {output}")
 
     state["openai_reference_images"] = images
     state["openai_reference_responses"] = responses
+    state["openai_reference_prompts"] = effective_prompts
     state["openai_reference_generation"] = {
         "model": model,
         "size": size,
@@ -935,6 +1135,8 @@ def command_generate_reference(args: argparse.Namespace) -> None:
         "output_format": output_format,
         "background": background,
         "views": views,
+        "generation_order": generation_order,
+        "reference_strategy": strategy,
         "created_at": int(time.time()),
     }
     state["reference_status"] = "openai_generated"
