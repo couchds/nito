@@ -45,7 +45,7 @@ from .skeleton import (
     QWG_OT_create_fitted_quadruped_armature,
     QWG_OT_create_quadruped_armature,
 )
-from .ui import QWG_PT_panel
+from .ui import QWG_OT_show_guide_bone_help, QWG_PT_panel
 
 
 CLASSES = (
@@ -60,6 +60,7 @@ CLASSES = (
     QWG_OT_generate_walk_cycle,
     QWG_OT_clear_cycle_keys,
     QWG_OT_set_base_pose,
+    QWG_OT_show_guide_bone_help,
     QWG_PT_panel,
 )
 

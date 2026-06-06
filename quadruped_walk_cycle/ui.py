@@ -351,20 +351,16 @@ class QWG_PT_panel(Panel):
         layout.separator()
         layout.label(text="Placement Guide", icon="INFO")
         self._draw_wrapped_text(layout, help_data["role"])
+        self._draw_wrapped_text(layout, "Open the full notes for exact head/tail placement.")
         help_op = layout.operator("qwg.show_guide_bone_help", text="Open Full Placement Notes", icon="HELP")
         help_op.bone_name = bone_name
-
-        for label, key in (("Head", "head"), ("Tail", "tail"), ("Check", "check")):
-            layout.separator()
-            layout.label(text=f"{label}:")
-            self._draw_wrapped_text(layout, help_data[key])
 
         if is_leg_guide_bone(bone_name):
             layout.separator()
             layout.label(text="Side-view note:")
             self._draw_wrapped_text(
                 layout,
-                "Left and right legs often overlap in a side view. Correct the visible chain cleanly; Generate Test Rig From Guide mirrors leg pairs by default unless you disable Mirror Leg Pairs.",
+                "Left and right legs often overlap. Nito mirrors leg pairs by default.",
             )
 
     def _guide_help_data(self, bone_name):
