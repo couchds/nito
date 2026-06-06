@@ -107,7 +107,7 @@ The sidebar button always runs with mirrored leg pairs and replacement enabled. 
 
 The guide armature is hidden by default after **Generate Test Rig From Guide** so the viewport shows the test rig cleanly. Unhide the guide object in the Outliner if you want to edit and regenerate.
 
-When a guide armature is selected, the Nito panel shows the active guide bone label, such as `Head`, `Neck`, or `Front Left Hoof`, so you can tell which landmark you are placing.
+When a guide armature is selected, the Nito panel shows the active guide bone label, such as `Head`, `Neck`, or `Front Left Foot / Paw / Hoof`, so you can tell which landmark you are placing. It also shows a placement guide for the selected bone with head/tail instructions, anatomical landmarks, common mistakes, and the side-view mirroring note for leg bones.
 
 The **Draft Test Rig From Mesh** button still creates a direct one-shot fitted armature, but it is best treated as a quick draft rather than the main workflow.
 

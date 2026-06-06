@@ -1,4 +1,7 @@
-from bpy.types import Panel
+from textwrap import wrap
+
+from bpy.props import StringProperty
+from bpy.types import Operator, Panel
 
 from .constants import FK_FIELDS, IK_FIELDS, LEG_LABELS, LEG_ORDER
 from .rig_utils import active_armature, resolve_leg_modes
@@ -13,17 +16,168 @@ GUIDE_BONE_LABELS = {
     "qwg_guide_tail": "Tail",
     "qwg_guide_front_left_upper": "Front Left Upper Leg",
     "qwg_guide_front_left_lower": "Front Left Lower Leg",
-    "qwg_guide_front_left_foot": "Front Left Hoof",
+    "qwg_guide_front_left_foot": "Front Left Foot / Paw / Hoof",
     "qwg_guide_front_right_upper": "Front Right Upper Leg",
     "qwg_guide_front_right_lower": "Front Right Lower Leg",
-    "qwg_guide_front_right_foot": "Front Right Hoof",
+    "qwg_guide_front_right_foot": "Front Right Foot / Paw / Hoof",
     "qwg_guide_rear_left_upper": "Rear Left Upper Leg",
     "qwg_guide_rear_left_lower": "Rear Left Lower Leg",
-    "qwg_guide_rear_left_foot": "Rear Left Hoof",
+    "qwg_guide_rear_left_foot": "Rear Left Foot / Paw / Hoof",
     "qwg_guide_rear_right_upper": "Rear Right Upper Leg",
     "qwg_guide_rear_right_lower": "Rear Right Lower Leg",
-    "qwg_guide_rear_right_foot": "Rear Right Hoof",
+    "qwg_guide_rear_right_foot": "Rear Right Foot / Paw / Hoof",
 }
+
+
+GUIDE_BONE_HELP = {
+    "qwg_guide_pelvis": {
+        "role": "Rear torso and hip block. This defines where the spine leaves the rump and where the rear legs should be anchored.",
+        "head": "Place at the rear center of the body mass, near the top/front of the hip bowl and just forward of the tail base. Keep it on the animal centerline, inside the body rather than on the outer fur silhouette.",
+        "tail": "Place forward along the back into the lumbar area, where the rump transitions into the main spine. It should stay inside the torso and roughly follow the top mass of the hips.",
+        "check": "Do not put this on the tail hair, saddle, armor, or the visible outside contour. It is an internal skeletal guide for the hip/pelvis area.",
+    },
+    "qwg_guide_spine": {
+        "role": "Middle torso segment. This bridges the pelvis to the rib cage and controls the main back line.",
+        "head": "This should connect from the pelvis tail at the rear/mid back.",
+        "tail": "Place around the middle of the rib cage or saddle area, still on the centerline and inside the body mass.",
+        "check": "Keep the spine smooth and centered through the body. Ignore saddles, plates, fur clumps, and other surface props.",
+    },
+    "qwg_guide_chest": {
+        "role": "Front torso and shoulder block. This sets the front-leg anchor and the base of the neck.",
+        "head": "This should connect from the spine tail near the middle/front of the back.",
+        "tail": "Place at the withers or upper chest/base-neck area, above and slightly behind where the front legs enter the torso.",
+        "check": "For horses, think withers/shoulder area. For dogs/cats, think upper shoulder blade area. Keep it inside the body, not on armor or tack.",
+    },
+    "qwg_guide_neck": {
+        "role": "Neck chain from chest to skull. This controls the animal's head carriage.",
+        "head": "Place at the chest tail/base of neck, where the neck rises out of the shoulders.",
+        "tail": "Place near the poll/base of skull, behind the ears and before the face/muzzle begins.",
+        "check": "Follow the center of the neck volume, not the mane or fur outline. On long-necked animals, keep this as the main neck axis.",
+    },
+    "qwg_guide_head": {
+        "role": "Head direction and skull length. This gives the generated rig a head bone that can rotate naturally.",
+        "head": "Place at the base of skull where the neck ends.",
+        "tail": "Place toward the center/front of the skull or muzzle direction. For long snouts, aim through the face but avoid stretching all the way to tiny nose details unless the whole head is long.",
+        "check": "Use the skull/head mass, not ears, horns, reins, bridle straps, or decorative armor. Ears and horns usually should not define the head bone.",
+    },
+    "qwg_guide_tail": {
+        "role": "Bony tail direction. This is a skeleton guide for the tail root and main tail line.",
+        "head": "Place at the tail base, where the tail exits the pelvis/rump.",
+        "tail": "Place along the bony tail direction. For fluffy tails, aim through the core of the tail rather than the outer fur edge.",
+        "check": "If the animal has no visible tail or only a stub, keep this short and close to the rump. Do not chase long hair volume.",
+    },
+}
+
+
+LEG_BONE_HELP = {
+    ("front", "upper"): {
+        "role": "Front upper limb. This approximates shoulder to elbow, even when the shoulder is hidden inside the torso.",
+        "head": "Place at the shoulder socket area, slightly inside the chest where the front leg enters the body. On horses this is high and behind the visible upper front leg; on dogs/cats it is inside the shoulder blade mass.",
+        "tail": "Place at the elbow, usually the first major bend below the chest and behind the front leg column.",
+        "check": "Do not start at the top surface of the shoulder or at armor straps. This bone is internal, from shoulder joint to elbow.",
+    },
+    ("front", "lower"): {
+        "role": "Front lower limb. This runs from elbow to wrist/carpus, the long lower front-leg segment.",
+        "head": "Place at the elbow, matching the upper front-leg tail.",
+        "tail": "Place at the wrist/carpus bend just above the paw or hoof. On a horse this is the visible front knee/carpus; on a dog/cat it is the wrist area above the paw.",
+        "check": "This should usually be mostly vertical in a standing pose. Avoid placing the tail at the ground contact; that belongs to the foot guide.",
+    },
+    ("front", "foot"): {
+        "role": "Front foot, paw, or hoof. This defines the contact direction from wrist/carpus to the toe/hoof.",
+        "head": "Place at the wrist/carpus or ankle-like bend where the lower front limb ends.",
+        "tail": "Place at the front/center of the toe, paw pad, or hoof contact point on the ground.",
+        "check": "Tail should land on the contact point used for animation. For hooves, use the hoof tip/centerline; for paws, use the front pad/toe center.",
+    },
+    ("rear", "upper"): {
+        "role": "Rear upper limb. This approximates hip to stifle/knee through the thigh.",
+        "head": "Place at the hip socket area inside the rump, usually forward/down from the tail base and inside the rear body mass.",
+        "tail": "Place at the stifle/knee, the forward-facing bend of the rear leg under the flank. This is not the hock.",
+        "check": "This bone is often partly hidden by body volume. Use the anatomical thigh direction rather than the outer rump silhouette.",
+    },
+    ("rear", "lower"): {
+        "role": "Rear lower limb. This runs from stifle/knee to hock/ankle.",
+        "head": "Place at the stifle/knee, matching the rear upper-limb tail.",
+        "tail": "Place at the hock, the backward-pointing ankle bend above the rear foot or hoof.",
+        "check": "For horses and dogs this usually angles backward/down before the foot drops to the ground. Do not put the tail at the hoof or paw contact.",
+    },
+    ("rear", "foot"): {
+        "role": "Rear foot, paw, or hoof. This defines the contact direction from hock/ankle to toe/hoof.",
+        "head": "Place at the hock/ankle where the rear lower limb ends.",
+        "tail": "Place at the front/center of the toe, paw pad, or hoof contact point on the ground.",
+        "check": "Use the animation contact point, not the back of the heel/hock. The foot guide should describe how the foot rests on the ground.",
+    },
+}
+
+
+def guide_help_data(bone_name):
+    """Return placement help for a guide bone."""
+    if bone_name in GUIDE_BONE_HELP:
+        return GUIDE_BONE_HELP[bone_name]
+
+    parts = bone_name.split("_")
+    if len(parts) < 5 or parts[0:2] != ["qwg", "guide"]:
+        return None
+
+    limb_region = parts[2]
+    segment = parts[-1]
+    if limb_region not in {"front", "rear"} or segment not in {"upper", "lower", "foot"}:
+        return None
+    return LEG_BONE_HELP.get((limb_region, segment))
+
+
+def is_leg_guide_bone(bone_name):
+    """Return whether a guide bone belongs to a leg chain."""
+    return any(token in bone_name for token in ("_front_", "_rear_"))
+
+
+def draw_wrapped_text(layout, text, width):
+    """Draw readable wrapped helper text in Blender UI labels."""
+    for line in wrap(text, width=width, break_long_words=False):
+        layout.label(text=line)
+
+
+class QWG_OT_show_guide_bone_help(Operator):
+    bl_idname = "qwg.show_guide_bone_help"
+    bl_label = "Nito Bone Placement Notes"
+    bl_description = "Show detailed placement notes for the selected Nito guide bone"
+    bl_options = {"INTERNAL"}
+
+    bone_name: StringProperty(default="")
+
+    def invoke(self, context, event):
+        """Open a wider dialog for long-form placement guidance."""
+        return context.window_manager.invoke_props_dialog(self, width=560)
+
+    def draw(self, context):
+        """Draw long-form placement help in a dialog."""
+        layout = self.layout
+        help_data = guide_help_data(self.bone_name)
+        title = GUIDE_BONE_LABELS.get(self.bone_name, self.bone_name or "Guide Bone")
+
+        layout.label(text=title, icon="BONE_DATA")
+        if self.bone_name:
+            layout.label(text=self.bone_name)
+        if not help_data:
+            draw_wrapped_text(layout, "No placement notes are available for this bone yet.", width=72)
+            return
+
+        for label, key in (("Role", "role"), ("Head placement", "head"), ("Tail placement", "tail"), ("Common checks", "check")):
+            box = layout.box()
+            box.label(text=label)
+            draw_wrapped_text(box, help_data[key], width=72)
+
+        if is_leg_guide_bone(self.bone_name):
+            box = layout.box()
+            box.label(text="Side-view note")
+            draw_wrapped_text(
+                box,
+                "Left and right legs often overlap in a side view. Correct the visible chain cleanly; Generate Test Rig From Guide mirrors leg pairs by default unless you disable Mirror Leg Pairs.",
+                width=72,
+            )
+
+    def execute(self, context):
+        """Close the help dialog."""
+        return {"FINISHED"}
 
 
 class QWG_PT_panel(Panel):
@@ -173,15 +327,53 @@ class QWG_PT_panel(Panel):
         return ""
 
     def _draw_guide_status(self, layout, context):
-        """Draw the active guide bone label while editing a guide rig."""
+        """Draw the active guide bone label and placement help."""
         bone_name = self._active_guide_bone_name(context)
         box = layout.box()
         box.label(text="Nito Guide Bone")
         if bone_name:
             box.label(text=GUIDE_BONE_LABELS.get(bone_name, bone_name), icon="BONE_DATA")
             box.label(text=bone_name)
+            self._draw_guide_help(box, bone_name)
         else:
             box.label(text="No guide bone selected.")
+            self._draw_wrapped_text(
+                box,
+                "Select a guide bone in Edit Mode or Pose Mode to see placement guidance for that landmark.",
+            )
+
+    def _draw_guide_help(self, layout, bone_name):
+        """Draw detailed placement notes for the selected guide bone."""
+        help_data = self._guide_help_data(bone_name)
+        if not help_data:
+            return
+
+        layout.separator()
+        layout.label(text="Placement Guide", icon="INFO")
+        self._draw_wrapped_text(layout, help_data["role"])
+        help_op = layout.operator("qwg.show_guide_bone_help", text="Open Full Placement Notes", icon="HELP")
+        help_op.bone_name = bone_name
+
+        for label, key in (("Head", "head"), ("Tail", "tail"), ("Check", "check")):
+            layout.separator()
+            layout.label(text=f"{label}:")
+            self._draw_wrapped_text(layout, help_data[key])
+
+        if is_leg_guide_bone(bone_name):
+            layout.separator()
+            layout.label(text="Side-view note:")
+            self._draw_wrapped_text(
+                layout,
+                "Left and right legs often overlap in a side view. Correct the visible chain cleanly; Generate Test Rig From Guide mirrors leg pairs by default unless you disable Mirror Leg Pairs.",
+            )
+
+    def _guide_help_data(self, bone_name):
+        """Return placement help for a guide bone."""
+        return guide_help_data(bone_name)
+
+    def _draw_wrapped_text(self, layout, text, width=25):
+        """Draw readable wrapped helper text in Blender's narrow sidebar."""
+        draw_wrapped_text(layout, text, width=width)
 
     def _draw_mapping(self, layout, settings, armature):
         """Draw body, IK, and FK bone mapping controls."""
