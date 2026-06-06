@@ -100,6 +100,45 @@ button:disabled {
   transform: none;
 }
 
+a {
+  color: inherit;
+}
+
+.button-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: linear-gradient(180deg, rgba(255, 252, 244, 0.98), rgba(239, 229, 209, 0.86));
+  color: var(--ink);
+  text-decoration: none;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.82) inset, 0 8px 18px rgba(22, 18, 13, 0.05);
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease,
+    box-shadow 150ms ease,
+    color 150ms ease,
+    transform 150ms ease;
+}
+
+.button-link:hover {
+  border-color: rgba(183, 138, 69, 0.5);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.9) inset, 0 12px 24px rgba(22, 18, 13, 0.09);
+  transform: translateY(-1px);
+}
+
+.button-link:active {
+  transform: translateY(0);
+}
+
+.button-link:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
 .topbar {
   position: sticky;
   top: 0;
@@ -444,10 +483,25 @@ textarea:focus {
 }
 
 .tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-width: 96px;
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: 6px;
   border-color: transparent;
   background: transparent;
+  color: var(--ink);
+  text-decoration: none;
   box-shadow: none;
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease,
+    box-shadow 150ms ease,
+    color 150ms ease,
+    transform 150ms ease;
 }
 
 .tab.is-active {
@@ -1457,7 +1511,9 @@ textarea:focus {
 }
 
 .batch-item button,
-.sample-item button {
+.sample-item button,
+.batch-item .button-link,
+.sample-item .button-link {
   min-height: 32px;
   padding: 0 10px;
   margin-top: 10px;
@@ -1773,7 +1829,8 @@ textarea:focus {
   line-height: 1.45;
 }
 
-.empty-state button {
+.empty-state button,
+.empty-state .button-link {
   margin-top: 12px;
 }
 

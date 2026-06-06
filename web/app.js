@@ -7,7 +7,7 @@ const state = {
   selectedBatchId: "",
   selectedSampleId: "",
   selectedJobId: "",
-  initialViewApplied: false,
+  initialRouteApplied: false,
 };
 
 const legacyBodyPlanAliases = {
@@ -57,6 +57,8 @@ const skeletonTypeOptions = [
 const elements = {
   statusLine: document.querySelector("#statusLine"),
   refreshButton: document.querySelector("#refreshButton"),
+  homeActiveJobs: document.querySelector("#homeActiveJobs"),
+  homeUnfinishedSamples: document.querySelector("#homeUnfinishedSamples"),
   sampleForm: document.querySelector("#sampleForm"),
   createSampleButton: document.querySelector("#createSampleButton"),
   runForm: document.querySelector("#runForm"),
@@ -118,6 +120,26 @@ function tag(value) {
   return `<span class="tag ${statusClass(value)}">${escapeHtml(value || "unknown")}</span>`;
 }
 
+function pagePath(viewName, id = "") {
+  if ((viewName === "sampleDetail" || viewName === "samples") && id) {
+    return `/samples/${encodeURIComponent(id)}`;
+  }
+  if ((viewName === "batchDetail" || viewName === "batches") && id) {
+    return `/batches/${encodeURIComponent(id)}`;
+  }
+  const paths = {
+    home: "/",
+    batches: "/batches",
+    batchDetail: "/batches",
+    samples: "/samples",
+    sampleDetail: "/samples",
+    create: "/create",
+    jobs: "/jobs",
+    settings: "/settings",
+  };
+  return paths[viewName] || "/";
+}
+
 function emptyState(title, detail, actionLabel = "", viewName = "") {
   return `
     <div class="empty-state">
@@ -127,7 +149,7 @@ function emptyState(title, detail, actionLabel = "", viewName = "") {
         <p>${escapeHtml(detail)}</p>
         ${
           actionLabel && viewName
-            ? `<button type="button" data-view="${escapeHtml(viewName)}">${escapeHtml(actionLabel)}</button>`
+            ? `<a class="button-link" href="${escapeHtml(pagePath(viewName))}">${escapeHtml(actionLabel)}</a>`
             : ""
         }
       </div>
@@ -328,8 +350,75 @@ function sampleById(sampleId) {
   return state.samples.find((sample) => sample.sample_id === sampleId);
 }
 
+function routeFromLocation() {
+  const params = new URLSearchParams(window.location.search);
+  const path = window.location.pathname.replace(/\/+$/, "") || "/";
+  const parts = path.split("/").filter(Boolean);
+  if (path === "/" && params.get("view")) {
+    const requestedView = params.get("view");
+    const allowedViews = new Set(["home", "batches", "samples", "create", "jobs", "settings"]);
+    return {
+      view: allowedViews.has(requestedView) ? requestedView : "home",
+      bodyPlan: params.get("bodyPlan") || "",
+      step: params.get("step") || "",
+    };
+  }
+  if (parts[0] === "samples" && parts[1]) {
+    return { view: "sampleDetail", sampleId: decodeURIComponent(parts[1]) };
+  }
+  if (parts[0] === "batches" && parts[1]) {
+    return { view: "batchDetail", batchId: decodeURIComponent(parts[1]) };
+  }
+  if (parts[0] === "samples") return { view: "samples" };
+  if (parts[0] === "batches") return { view: "batches" };
+  if (parts[0] === "create") return { view: "create" };
+  if (parts[0] === "jobs") return { view: "jobs" };
+  if (parts[0] === "settings") return { view: "settings" };
+  return { view: "home" };
+}
+
+function syncRouteSelection(route) {
+  if (route.sampleId) {
+    state.selectedSampleId = route.sampleId;
+  }
+  if (route.batchId) {
+    state.selectedBatchId = route.batchId;
+  }
+}
+
+function applyRoute(route = routeFromLocation()) {
+  syncRouteSelection(route);
+  switchView(route.view);
+  if (!state.initialRouteApplied) {
+    state.initialRouteApplied = true;
+    if (route.bodyPlan) {
+      chooseSkeletonType(route.bodyPlan);
+    }
+    if (route.view === "create" && route.step === "skeleton") {
+      setCreateWizardStep("skeleton");
+    }
+  }
+}
+
+function navigateTo(path) {
+  window.history.pushState({}, "", path);
+  applyRoute();
+}
+
 function isRunning(job) {
   return job?.status === "running";
+}
+
+function isTrainingReadySample(sample) {
+  return Boolean(sample?.training_eligible || sample?.export_verified || sample?.status === "verified_exported");
+}
+
+function activeJobs() {
+  return state.jobs.filter(isRunning);
+}
+
+function unfinishedSamples() {
+  return state.samples.filter((sample) => !isTrainingReadySample(sample));
 }
 
 function jobActionLabel(value) {
@@ -384,17 +473,19 @@ async function loadState() {
   render();
 }
 
-function chooseSelections() {
-  if (!state.batches.some((batch) => batch.run_id === state.selectedBatchId)) {
+function chooseSelections(route = routeFromLocation()) {
+  if (!route.batchId && !state.batches.some((batch) => batch.run_id === state.selectedBatchId)) {
     state.selectedBatchId = state.batches[0]?.run_id || "";
   }
-  if (!state.samples.some((sample) => sample.sample_id === state.selectedSampleId)) {
+  if (!route.sampleId && !state.samples.some((sample) => sample.sample_id === state.selectedSampleId)) {
     state.selectedSampleId = state.samples[0]?.sample_id || "";
   }
 }
 
 function render() {
-  chooseSelections();
+  const route = routeFromLocation();
+  syncRouteSelection(route);
+  chooseSelections(route);
   renderCreateWizard();
   elements.batchCount.textContent = state.batches.length;
   elements.sampleCount.textContent = state.samples.length;
@@ -404,31 +495,26 @@ function render() {
   const runningText = runningJobs ? `, ${runningJobs} running` : "";
   const staleText = staleJobs ? `, ${staleJobs} stale` : "";
   elements.statusLine.textContent = `${state.batches.length} batches, ${state.samples.length} samples, ${state.jobs.length} UI jobs${runningText}${staleText}`;
+  renderHome();
   renderBatches();
   renderBatchDetail();
   renderSamples();
   renderSampleDetail();
   renderJobs();
   renderSettings();
-  applyInitialView();
+  applyRoute(route);
 }
 
-function applyInitialView() {
-  if (state.initialViewApplied) return;
-  state.initialViewApplied = true;
-  const params = new URLSearchParams(window.location.search);
-  const requestedView = params.get("view");
-  const allowedViews = new Set(["batches", "samples", "create", "jobs", "settings"]);
-  if (allowedViews.has(requestedView)) {
-    switchView(requestedView);
-  }
-  const requestedBodyPlan = params.get("bodyPlan");
-  if (requestedBodyPlan) {
-    chooseSkeletonType(requestedBodyPlan);
-  }
-  if (requestedView === "create" && params.get("step") === "skeleton") {
-    setCreateWizardStep("skeleton");
-  }
+function renderHome() {
+  const running = activeJobs();
+  elements.homeActiveJobs.innerHTML = running.length
+    ? running.map((job) => jobCard(job)).join("")
+    : emptyState("No active jobs", "Running reference art, Tripo, and Blender prep jobs will show here.");
+
+  const samples = unfinishedSamples();
+  elements.homeUnfinishedSamples.innerHTML = samples.length
+    ? samples.map((sample) => sampleCard(sample, { buttonLabel: "Open sample" })).join("")
+    : emptyState("No unfinished samples", "Everything is through the pipeline and ready for training.", "Create Sample", "create");
 }
 
 function renderCreateWizard() {
@@ -478,7 +564,7 @@ function renderBatches() {
             ${faceRange ? tag(faceRange) : ""}
             ${batch.failed_count ? tag(`${batch.failed_count} failed`) : tag("0 failed")}
           </div>
-          <button type="button" data-batch-id="${escapeHtml(batch.run_id)}">View Batch</button>
+          <a class="button-link" href="${escapeHtml(pagePath("batchDetail", batch.run_id))}">View Batch</a>
         </article>
       `;
     })
@@ -488,7 +574,10 @@ function renderBatches() {
 function renderBatchDetail() {
   const batch = state.batches.find((item) => item.run_id === state.selectedBatchId);
   if (!batch) {
-    elements.batchDetail.innerHTML = '<p class="empty">Select a batch.</p>';
+    const message = state.selectedBatchId
+      ? `Batch not found: ${state.selectedBatchId}`
+      : "Select a batch.";
+    elements.batchDetail.innerHTML = `<p class="empty">${escapeHtml(message)}</p>`;
     return;
   }
   const sampleIds = batch.sample_ids || [];
@@ -574,7 +663,7 @@ function sampleCard(sample, options = {}) {
             ${Object.keys(sample.reference_images || {}).length ? tag("reference") : ""}
             ${Object.keys(sample.review_images || {}).length ? tag("review") : ""}
           </div>
-          <button type="button" data-sample-id="${escapeHtml(sample.sample_id)}">${buttonLabel}</button>
+          <a class="button-link" href="${escapeHtml(pagePath("sampleDetail", sample.sample_id))}">${escapeHtml(buttonLabel)}</a>
         </div>
       </div>
     </article>
@@ -984,9 +1073,12 @@ function skeletonSchemaPanel(sample) {
 }
 
 function renderSampleDetail() {
-  const sample = sampleById(state.selectedSampleId) || state.samples[0];
+  const sample = state.selectedSampleId ? sampleById(state.selectedSampleId) : state.samples[0];
   if (!sample) {
-    elements.sampleDetail.innerHTML = '<p class="empty">Select a sample.</p>';
+    const message = state.selectedSampleId
+      ? `Sample not found: ${state.selectedSampleId}`
+      : "Select a sample.";
+    elements.sampleDetail.innerHTML = `<p class="empty">${escapeHtml(message)}</p>`;
     elements.sampleDetail.dataset.sampleId = "";
     elements.sampleDetail.dataset.renderKey = "";
     return;
@@ -1036,28 +1128,28 @@ function renderJobs() {
     );
     return;
   }
-  elements.jobList.innerHTML = state.jobs
-    .map(
-      (job) => `
-        <article class="job-item">
-          <div class="item-header">
-            <h3>${escapeHtml(job.job_id)}</h3>
-            ${tag(job.status)}
-          </div>
-          <p>${formatTime(job.started_at)} | ${formatDuration(elapsedForJob(job))} | return code ${job.returncode ?? "pending"}</p>
-          <div class="tag-row">
-            ${tag(jobActionLabel(job.payload?.action))}
-            ${job.payload?.sampleId ? tag(job.payload.sampleId) : ""}
-            ${job.payload?.count ? tag(`${job.payload.count} samples`) : ""}
-            ${job.payload?.dryRun ? tag("dry_run") : ""}
-            ${job.payload?.faceLimit ? tag(`${job.payload.faceLimit} faces`) : ""}
-            ${job.status === "stale" ? tag("stale") : ""}
-          </div>
-          <button type="button" data-job-id="${escapeHtml(job.job_id)}">View Log</button>
-        </article>
-      `,
-    )
-    .join("");
+  elements.jobList.innerHTML = state.jobs.map((job) => jobCard(job)).join("");
+}
+
+function jobCard(job) {
+  return `
+    <article class="job-item">
+      <div class="item-header">
+        <h3>${escapeHtml(job.job_id)}</h3>
+        ${tag(job.status)}
+      </div>
+      <p>${formatTime(job.started_at)} | ${formatDuration(elapsedForJob(job))} | return code ${job.returncode ?? "pending"}</p>
+      <div class="tag-row">
+        ${tag(jobActionLabel(job.payload?.action))}
+        ${job.payload?.sampleId ? tag(job.payload.sampleId) : ""}
+        ${job.payload?.count ? tag(`${job.payload.count} samples`) : ""}
+        ${job.payload?.dryRun ? tag("dry_run") : ""}
+        ${job.payload?.faceLimit ? tag(`${job.payload.faceLimit} faces`) : ""}
+        ${job.status === "stale" ? tag("stale") : ""}
+      </div>
+      <button type="button" data-job-id="${escapeHtml(job.job_id)}">View Log</button>
+    </article>
+  `;
 }
 
 function inferredArmorState(prompt) {
@@ -1128,12 +1220,12 @@ async function createSample(event) {
     });
     state.selectedSampleId = result.sample_id;
     await loadState();
-    renderSampleDetail();
-    switchView("sampleDetail");
     elements.sampleForm.reset();
     elements.sampleMorphologySelect.value = "";
     setCreateWizardStep("prompt");
     renderCreateWizard();
+    navigateTo(pagePath("sampleDetail", result.sample_id));
+    renderSampleDetail();
   } catch (error) {
     elements.statusLine.textContent = error.message;
   } finally {
@@ -1154,7 +1246,7 @@ async function startBatch(event) {
     state.selectedJobId = job.job_id;
     await loadState();
     await loadJobLog(job.job_id);
-    switchView("jobs");
+    navigateTo("/jobs");
   } catch (error) {
     elements.statusLine.textContent = error.message;
   } finally {
@@ -1225,30 +1317,14 @@ async function saveSettings(event) {
 }
 
 function switchView(viewName) {
-  const activeTab = {
-    batchDetail: "batches",
-    sampleDetail: "samples",
-  }[viewName] || viewName;
-  document.querySelectorAll(".tab").forEach((button) => {
-    button.classList.toggle("is-active", button.dataset.view === activeTab);
+  const activePath = pagePath(viewName);
+  document.querySelectorAll(".tab").forEach((link) => {
+    link.classList.toggle("is-active", link.getAttribute("href") === activePath);
   });
   document.querySelectorAll(".view").forEach((view) => {
     view.classList.toggle("is-active", view.id === `${viewName}View`);
   });
 }
-
-function openSample(sampleId) {
-  state.selectedSampleId = sampleId;
-  renderSamples();
-  renderSampleDetail();
-  switchView("sampleDetail");
-}
-
-document.addEventListener("click", (event) => {
-  const button = event.target.closest("button[data-view]");
-  if (!button) return;
-  switchView(button.dataset.view);
-});
 
 elements.refreshButton.addEventListener("click", loadState);
 elements.promptNextButton.addEventListener("click", continueFromPrompt);
@@ -1264,24 +1340,6 @@ if (elements.runForm) {
 }
 elements.settingsForm.addEventListener("submit", saveSettings);
 window.addEventListener("nito-three-ready", () => hydrateModelViewers(elements.sampleDetail));
-elements.batchList.addEventListener("click", (event) => {
-  const button = event.target.closest("button[data-batch-id]");
-  if (!button) return;
-  state.selectedBatchId = button.dataset.batchId;
-  renderBatches();
-  renderBatchDetail();
-  switchView("batchDetail");
-});
-elements.batchDetail.addEventListener("click", (event) => {
-  const button = event.target.closest("button[data-sample-id]");
-  if (!button) return;
-  openSample(button.dataset.sampleId);
-});
-elements.sampleList.addEventListener("click", (event) => {
-  const button = event.target.closest("button[data-sample-id]");
-  if (!button) return;
-  openSample(button.dataset.sampleId);
-});
 elements.sampleDetail.addEventListener("click", async (event) => {
   const resetButton = event.target.closest("button[data-reset-stale]");
   if (resetButton) {
@@ -1314,13 +1372,14 @@ elements.sampleDetail.addEventListener("click", async (event) => {
   const logButton = event.target.closest("button[data-job-id]");
   if (!logButton) return;
   await loadJobLog(logButton.dataset.jobId);
-  switchView("jobs");
+  navigateTo("/jobs");
 });
 elements.jobList.addEventListener("click", async (event) => {
   const button = event.target.closest("button[data-job-id]");
   if (!button) return;
   await loadJobLog(button.dataset.jobId);
 });
+window.addEventListener("popstate", render);
 
 setInterval(async () => {
   try {

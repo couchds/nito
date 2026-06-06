@@ -33,15 +33,16 @@
 
     <main class="shell">
       <section class="workspace">
-        <nav class="tabs" aria-label="Views">
-          <button class="tab is-active" type="button" data-view="batches">Batches</button>
-          <button class="tab" type="button" data-view="samples">Samples</button>
-          <button class="tab" type="button" data-view="create">Create</button>
-          <button class="tab" type="button" data-view="jobs">Jobs</button>
-          <button class="tab" type="button" data-view="settings">Settings</button>
+        <nav class="tabs" aria-label="Pages">
+          <a class="tab is-active" href="/">Home</a>
+          <a class="tab" href="/samples">Samples</a>
+          <a class="tab" href="/batches">Batches</a>
+          <a class="tab" href="/create">Create</a>
+          <a class="tab" href="/jobs">Jobs</a>
+          <a class="tab" href="/settings">Settings</a>
         </nav>
 
-        <section id="batchesView" class="view is-active">
+        <section id="homeView" class="view is-active">
           <div class="metric-strip">
             <div>
               <span id="batchCount">0</span>
@@ -59,8 +60,26 @@
 
           <section class="content-band">
             <div class="section-heading">
+              <h2>Active Jobs</h2>
+              <a class="button-link" href="/jobs">All Jobs</a>
+            </div>
+            <div id="homeActiveJobs" class="job-list"></div>
+          </section>
+
+          <section class="content-band">
+            <div class="section-heading">
+              <h2>Unfinished Samples</h2>
+              <a class="button-link" href="/create">Create Sample</a>
+            </div>
+            <div id="homeUnfinishedSamples" class="sample-list"></div>
+          </section>
+        </section>
+
+        <section id="batchesView" class="view">
+          <section class="content-band">
+            <div class="section-heading">
               <h2>Batches</h2>
-              <button type="button" data-view="create">Create Sample</button>
+              <a class="button-link" href="/create">Create Sample</a>
             </div>
             <div id="batchList" class="batch-list"></div>
           </section>
@@ -68,7 +87,7 @@
 
         <section id="batchDetailView" class="view">
           <div class="page-heading">
-            <button type="button" data-view="batches">Back to Batches</button>
+            <a class="button-link" href="/batches">Back to Batches</a>
           </div>
           <section id="batchDetail" class="detail-page">
             <p class="empty">Select a batch.</p>
@@ -78,14 +97,14 @@
         <section id="samplesView" class="view">
           <div class="section-heading">
             <h2>Samples</h2>
-            <button type="button" data-view="create">Create Sample</button>
+            <a class="button-link" href="/create">Create Sample</a>
           </div>
           <div id="sampleList" class="sample-list"></div>
         </section>
 
         <section id="sampleDetailView" class="view">
           <div class="page-heading">
-            <button type="button" data-view="samples">Back to Samples</button>
+            <a class="button-link" href="/samples">Back to Samples</a>
           </div>
           <section id="sampleDetail" class="detail-page">
             <p class="empty">Select a sample.</p>

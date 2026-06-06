@@ -65,6 +65,8 @@ LEGACY_BODY_PLAN_ALIASES = {
     "lagomorph": "hind_leg_dominant",
     "reptile_shell": "shell_reptile",
 }
+PAGE_ROUTES = {"/", "/batches", "/samples", "/create", "/jobs", "/settings"}
+DETAIL_PAGE_ROUTE_PREFIXES = {"batches", "samples"}
 
 mimetypes.add_type("model/gltf-binary", ".glb")
 mimetypes.add_type("model/gltf+json", ".gltf")
@@ -144,6 +146,13 @@ def skeleton_schema_id_for_body_plan(label_schema: dict[str, Any], body_plan: st
     normalized_body_plan = LEGACY_BODY_PLAN_ALIASES.get(str(body_plan or "").strip(), str(body_plan or "").strip())
     schema_id = mapping.get(normalized_body_plan, "")
     return str(schema_id or "").strip()
+
+
+def is_page_route(path: str) -> bool:
+    if path in PAGE_ROUTES:
+        return True
+    parts = path.strip("/").split("/")
+    return len(parts) == 2 and parts[0] in DETAIL_PAGE_ROUTE_PREFIXES and bool(parts[1])
 
 
 class JobDatabase:
@@ -455,6 +464,8 @@ class WorkflowStore:
                     "variant_tags": string_list(state.get("variant_tags")),
                     "armor_state": state.get("armor_state", ""),
                     "status": status,
+                    "export_verified": bool(state.get("export_verified", False)),
+                    "training_eligible": bool(state.get("training_eligible", False)),
                     "ui_job": ui_job,
                     "created_at": state.get("created_at", 0),
                     "updated_at": state.get("updated_at", state.get("created_at", 0)),
@@ -1142,7 +1153,7 @@ class QWalkUIHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
-        if parsed.path == "/":
+        if is_page_route(parsed.path):
             self.send_file(WEB_ROOT / "index.html")
         elif parsed.path.startswith("/static/"):
             try:
