@@ -38,8 +38,8 @@ TAIL_BONE_NAMES = {"tail_01", "tail_02"}
 
 class QWG_OT_auto_map(Operator):
     bl_idname = "qwg.auto_map"
-    bl_label = "Auto Map Bones"
-    bl_description = "Try to fill quadruped bone fields from the selected armature's bone names"
+    bl_label = "Map Test Rig Bones"
+    bl_description = "Fill Nito test-rig bone fields from the selected armature's bone names"
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
@@ -63,21 +63,21 @@ class QWG_OT_auto_map(Operator):
             setattr(settings, lower, find_best_bone(names, leg=leg, kind="lower", minimum=10))
             setattr(settings, foot, find_best_bone(names, leg=leg, kind="foot", minimum=10))
 
-        self.report({"INFO"}, "Auto-mapping complete. Review fields before generating.")
+        self.report({"INFO"}, "Bone mapping complete. Review fields before posing the test rig.")
         return {"FINISHED"}
 
 
 class QWG_OT_bind_selected_meshes(Operator):
     bl_idname = "qwg.bind_selected_meshes"
-    bl_label = "Bind Selected Meshes To Rig"
-    bl_description = "Bind selected mesh objects to the active QWalk armature"
+    bl_label = "Bind Mesh To Test Rig"
+    bl_description = "Bind selected mesh objects to the active Nito test rig"
     bl_options = {"REGISTER", "UNDO"}
 
     weighting_mode: EnumProperty(
         name="Weights",
         description="How vertex weights are assigned during binding",
         items=(
-            ("NEAREST", "Nearest Bones", "Assign robust QWalk weights from nearest deform bones"),
+            ("NEAREST", "Nito Nearest Bones", "Assign robust Nito weights from nearest deform bones"),
             ("AUTOMATIC", "Blender Automatic", "Use Blender's automatic heat weighting"),
         ),
         default="NEAREST",
@@ -105,10 +105,10 @@ class QWG_OT_bind_selected_meshes(Operator):
         armature = active_armature(context)
         meshes = [obj for obj in context.selected_objects if obj.type == "MESH"]
         if not armature or not meshes:
-            self.report({"ERROR"}, "Select mesh object(s), then Shift-select the QWalk rig so it is active.")
+            self.report({"ERROR"}, "Select mesh object(s), then Shift-select the Nito test rig so it is active.")
             return {"CANCELLED"}
         if armature.get("qwg_is_guide"):
-            self.report({"ERROR"}, "Bind to the generated QWalk rig, not the guide armature.")
+            self.report({"ERROR"}, "Bind to the generated Nito test rig, not the guide armature.")
             return {"CANCELLED"}
 
         if context.object and context.object.mode != "OBJECT":
@@ -144,6 +144,98 @@ class QWG_OT_bind_selected_meshes(Operator):
         return {"FINISHED"}
 
 
+class QWG_OT_generate_bind_test_rig(Operator):
+    bl_idname = "qwg.generate_bind_test_rig"
+    bl_label = "Generate + Bind Test Rig"
+    bl_description = "Generate a Nito test rig from the selected guide, bind selected meshes, and enter Pose Mode"
+    bl_options = {"REGISTER", "UNDO"}
+
+    weighting_mode: EnumProperty(
+        name="Weights",
+        description="How vertex weights are assigned during binding",
+        items=(
+            ("NEAREST", "Nito Nearest Bones", "Assign robust Nito weights from nearest deform bones"),
+            ("AUTOMATIC", "Blender Automatic", "Use Blender's automatic heat weighting"),
+        ),
+        default="NEAREST",
+    )
+    replace_existing_armatures: BoolProperty(
+        name="Replace Armature Modifiers",
+        description="Remove existing Armature modifiers before binding to this test rig",
+        default=True,
+    )
+    max_influences: IntProperty(
+        name="Max Influences",
+        description="Maximum deform bones assigned to each vertex for nearest-bone weights",
+        default=4,
+        min=1,
+        max=8,
+    )
+
+    @classmethod
+    def poll(cls, context):
+        """Enable when a Nito guide and at least one mesh are selected."""
+        has_guide = any(obj.type == "ARMATURE" and obj.get("qwg_is_guide") for obj in context.selected_objects)
+        has_mesh = any(obj.type == "MESH" for obj in context.selected_objects)
+        return has_guide and has_mesh
+
+    def execute(self, context):
+        """Generate a poseable test rig from guides, bind meshes, and select the rig."""
+        guide = next((obj for obj in context.selected_objects if obj.type == "ARMATURE" and obj.get("qwg_is_guide")), None)
+        meshes = [obj for obj in context.selected_objects if obj.type == "MESH"]
+        if not guide or not meshes:
+            self.report({"ERROR"}, "Select a Nito guide and one or more meshes.")
+            return {"CANCELLED"}
+
+        if context.object and context.object.mode != "OBJECT":
+            bpy.ops.object.mode_set(mode="OBJECT")
+
+        bpy.ops.object.select_all(action="DESELECT")
+        guide.hide_set(False)
+        guide.select_set(True)
+        context.view_layer.objects.active = guide
+
+        guide_result = bpy.ops.qwg.create_armature_from_guides(
+            symmetrize_legs=True,
+            replace_existing_generated=True,
+            hide_guides_after_create=True,
+            map_after_create=True,
+        )
+        if guide_result != {"FINISHED"}:
+            self.report({"ERROR"}, "Could not generate a Nito test rig from the guide.")
+            return {"CANCELLED"}
+
+        armature = active_armature(context)
+        if not armature or armature.get("qwg_is_guide"):
+            self.report({"ERROR"}, "Generated test rig was not selected.")
+            return {"CANCELLED"}
+
+        if context.object and context.object.mode != "OBJECT":
+            bpy.ops.object.mode_set(mode="OBJECT")
+
+        bpy.ops.object.select_all(action="DESELECT")
+        for mesh in meshes:
+            mesh.select_set(True)
+        armature.select_set(True)
+        context.view_layer.objects.active = armature
+
+        bind_result = bpy.ops.qwg.bind_selected_meshes(
+            weighting_mode=self.weighting_mode,
+            replace_existing_armatures=self.replace_existing_armatures,
+            max_influences=self.max_influences,
+        )
+        if bind_result != {"FINISHED"}:
+            return {"CANCELLED"}
+
+        try:
+            bpy.ops.object.mode_set(mode="POSE")
+        except RuntimeError:
+            pass
+
+        self.report({"INFO"}, f"Generated and bound Nito test rig {armature.name}.")
+        return {"FINISHED"}
+
+
 def bind_with_automatic_weights(context, mesh, armature):
     """Bind one mesh to an armature using Blender automatic weights."""
     bpy.ops.object.select_all(action="DESELECT")
@@ -165,10 +257,12 @@ def remove_armature_modifiers(mesh):
 
 
 def ensure_armature_modifier(mesh, armature):
-    """Create or update the QWalk armature modifier."""
-    modifier = mesh.modifiers.get("QWalk Armature")
+    """Create or update the Nito armature modifier."""
+    modifier = mesh.modifiers.get("Nito Armature") or mesh.modifiers.get("QWalk Armature")
     if not modifier:
-        modifier = mesh.modifiers.new("QWalk Armature", "ARMATURE")
+        modifier = mesh.modifiers.new("Nito Armature", "ARMATURE")
+    else:
+        modifier.name = "Nito Armature"
     modifier.object = armature
     modifier.show_viewport = True
     modifier.show_render = True
@@ -203,7 +297,7 @@ def distance_to_segment(point, start, end):
 
 
 def leg_prefix(name):
-    """Return the QWalk leg prefix for a bone name, or None for non-leg bones."""
+    """Return the Nito leg prefix for a bone name, or None for non-leg bones."""
     for prefix in LEG_BONE_PREFIXES:
         if name.startswith(prefix):
             return prefix
@@ -483,8 +577,8 @@ def bind_with_nearest_bone_weights(mesh, armature, max_influences):
 
 class QWG_OT_generate_walk_cycle(Operator):
     bl_idname = "qwg.generate_walk_cycle"
-    bl_label = "Generate Walk Cycle"
-    bl_description = "Generate a looping quadruped walk cycle on the selected armature"
+    bl_label = "Generate Pose Test Walk"
+    bl_description = "Generate a temporary looping walk preview on the selected Nito test rig"
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
@@ -583,7 +677,7 @@ class QWG_OT_generate_walk_cycle(Operator):
             for constraint in foot.constraints:
                 if constraint.type != "IK":
                     continue
-                if constraint.name != "QWalk IK" and constraint.target != armature:
+                if constraint.name not in {"Nito IK", "QWalk IK"} and constraint.target != armature:
                     continue
                 if hasattr(constraint, "use_rotation"):
                     constraint.use_rotation = False
@@ -747,8 +841,8 @@ class QWG_OT_generate_walk_cycle(Operator):
 
 class QWG_OT_clear_cycle_keys(Operator):
     bl_idname = "qwg.clear_cycle_keys"
-    bl_label = "Clear Generated Range"
-    bl_description = "Remove generated location and Euler rotation keys from mapped bones in the frame range"
+    bl_label = "Clear Preview Keys"
+    bl_description = "Remove generated preview location and Euler rotation keys from mapped bones in the frame range"
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
@@ -767,14 +861,14 @@ class QWG_OT_clear_cycle_keys(Operator):
 
         data_paths = data_paths_for_cleanup(settings, mode_by_leg)
         remove_keys_in_range(armature.animation_data.action, data_paths, settings.frame_start, settings.frame_end)
-        self.report({"INFO"}, "Cleared mapped keys in the generated frame range.")
+        self.report({"INFO"}, "Cleared mapped preview keys in the generated frame range.")
         return {"FINISHED"}
 
 
 class QWG_OT_set_base_pose(Operator):
     bl_idname = "qwg.set_base_pose"
-    bl_label = "Set Base Pose"
-    bl_description = "Use the current mapped transforms as the base pose for future walk generation"
+    bl_label = "Store Current Pose As Base"
+    bl_description = "Use the current mapped transforms as the base pose for future Nito pose tests"
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
@@ -787,5 +881,5 @@ class QWG_OT_set_base_pose(Operator):
         armature = active_armature(context)
         settings = context.scene.qwg_settings
         store_base_pose(armature, mapped_bones(settings))
-        self.report({"INFO"}, "Stored current mapped transforms as the QWalk base pose.")
+        self.report({"INFO"}, "Stored current mapped transforms as the Nito base pose.")
         return {"FINISHED"}

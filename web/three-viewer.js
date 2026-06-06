@@ -17,6 +17,7 @@ class NitoThreeViewport {
     this.modelSrc = root.dataset.modelSrc || "";
     this.fallbackSrc = root.dataset.fallbackSrc || "";
     this.labelSrc = root.dataset.labelSrc || "";
+    this.labelMeshSrc = root.dataset.labelMeshSrc || "";
     this.model = null;
     this.labelGroup = null;
     this.labelBoneCount = 0;
@@ -27,6 +28,8 @@ class NitoThreeViewport {
     this.wireframe = false;
     this.labelsVisible = Boolean(this.labelSrc);
     this.modelStatus = "";
+    this.modelCoordinateTransform = null;
+    this.labelCoordinatesMatchModel = false;
 
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x090c0c);
@@ -116,9 +119,9 @@ class NitoThreeViewport {
   }
 
   async load() {
-    const candidates = [this.modelSrc, this.fallbackSrc].filter(Boolean);
+    const candidates = [this.labelMeshSrc, this.modelSrc, this.fallbackSrc].filter(Boolean);
     if (!candidates.length) {
-      this.setStatus("No GLB source available");
+      this.setStatus("No 3D model source available");
       return;
     }
 
@@ -126,19 +129,36 @@ class NitoThreeViewport {
       const src = candidates[index];
       try {
         const timeoutMs = index ? PROXY_LOAD_TIMEOUT_MS : REMOTE_LOAD_TIMEOUT_MS;
-        this.setStatus(index ? "Trying local proxy" : "Loading GLB");
-        const gltf = await this.loadGltf(src, timeoutMs, (message) => this.setStatus(message));
-        this.setModel(gltf.scene);
+        const isLabelMesh = src === this.labelMeshSrc;
+        this.setStatus(isLabelMesh ? "Loading canonical label mesh" : index ? "Trying local proxy" : "Loading GLB");
+        const model = await this.loadModel(src, timeoutMs, (message) => this.setStatus(message));
+        this.setModel(model, { coordinatesMatchLabel: isLabelMesh });
         await this.loadLabelOverlay();
         this.poster?.classList.add("is-hidden");
         return;
       } catch (error) {
-        this.setStatus(index ? "Local proxy did not return a GLB" : "Remote GLB did not respond; trying fallback");
+        this.setStatus(index ? "Model fallback did not load" : "Primary 3D source did not load; trying fallback");
         if (index === candidates.length - 1) {
-          this.setStatus("GLB preview failed. The render image is shown until the local GLB is available.");
+          this.setStatus("3D preview failed. The render image is shown until a loadable model is available.");
           this.poster?.classList.remove("is-hidden");
         }
       }
+    }
+  }
+
+  loadModel(src, timeoutMs, onProgress) {
+    const extension = this.modelExtension(src);
+    if (extension === "obj") {
+      return this.loadObj(src, timeoutMs, onProgress);
+    }
+    return this.loadGltf(src, timeoutMs, onProgress).then((gltf) => gltf.scene);
+  }
+
+  modelExtension(src) {
+    try {
+      return new URL(src, window.location.href).pathname.split(".").pop().toLowerCase();
+    } catch (error) {
+      return src.split("?")[0].split(".").pop().toLowerCase();
     }
   }
 
@@ -169,7 +189,84 @@ class NitoThreeViewport {
     });
   }
 
-  setModel(model) {
+  loadObj(src, timeoutMs, onProgress) {
+    return new Promise((resolve, reject) => {
+      const controller = new AbortController();
+      const timeoutId = window.setTimeout(() => {
+        controller.abort();
+        reject(new Error(`OBJ load timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+      fetch(src, { cache: "no-store", signal: controller.signal })
+        .then((response) => {
+          if (!response.ok) throw new Error(`OBJ returned HTTP ${response.status}`);
+          onProgress("Loading canonical label mesh");
+          return response.text();
+        })
+        .then((text) => {
+          window.clearTimeout(timeoutId);
+          resolve(this.parseObj(text));
+        })
+        .catch((error) => {
+          window.clearTimeout(timeoutId);
+          reject(error);
+        });
+    });
+  }
+
+  parseObj(text) {
+    const vertices = [];
+    const positions = [];
+    const lines = text.split(/\r?\n/);
+
+    const resolveIndex = (token) => {
+      const rawIndex = Number.parseInt(token.split("/")[0], 10);
+      if (!Number.isFinite(rawIndex) || rawIndex === 0) return -1;
+      return rawIndex > 0 ? rawIndex - 1 : vertices.length + rawIndex;
+    };
+
+    lines.forEach((line) => {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) return;
+      const parts = trimmed.split(/\s+/);
+      if (parts[0] === "v" && parts.length >= 4) {
+        vertices.push(this.blenderPointToThree(parts.slice(1, 4)));
+      }
+      if (parts[0] === "f" && parts.length >= 4) {
+        const faceIndices = parts.slice(1).map(resolveIndex).filter((index) => vertices[index]);
+        for (let index = 1; index < faceIndices.length - 1; index += 1) {
+          [faceIndices[0], faceIndices[index], faceIndices[index + 1]].forEach((vertexIndex) => {
+            positions.push(...vertices[vertexIndex].toArray());
+          });
+        }
+      }
+    });
+
+    if (!positions.length) {
+      throw new Error("OBJ did not contain drawable faces");
+    }
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+    geometry.computeVertexNormals();
+    geometry.computeBoundingBox();
+
+    const mesh = new THREE.Mesh(
+      geometry,
+      new THREE.MeshStandardMaterial({
+        color: 0xdce8e3,
+        roughness: 0.74,
+        metalness: 0.02,
+        side: THREE.DoubleSide,
+      }),
+    );
+    mesh.name = "NitoCanonicalLabelMesh";
+    const group = new THREE.Group();
+    group.name = "NitoCanonicalLabelMeshRoot";
+    group.add(mesh);
+    return group;
+  }
+
+  setModel(model, options = {}) {
     this.clearLabelOverlay();
     if (this.model) {
       this.scene.remove(this.model);
@@ -185,15 +282,21 @@ class NitoThreeViewport {
     const sourceCenter = sourceBox.getCenter(new THREE.Vector3());
     const sourceSize = sourceBox.getSize(new THREE.Vector3());
     const maxDimension = Math.max(sourceSize.x, sourceSize.y, sourceSize.z) || 1;
+    const modelScale = 3.2 / maxDimension;
     const normalizedRoot = new THREE.Group();
     normalizedRoot.name = "NitoNormalizedModel";
-    normalizedRoot.scale.setScalar(3.2 / maxDimension);
+    normalizedRoot.scale.setScalar(modelScale);
     model.position.sub(sourceCenter);
     normalizedRoot.add(model);
 
     this.model = normalizedRoot;
     this.modelMaterials = [];
     this.meshCount = 0;
+    this.modelCoordinateTransform = {
+      center: sourceCenter.clone(),
+      scale: modelScale,
+    };
+    this.labelCoordinatesMatchModel = Boolean(options.coordinatesMatchLabel);
     this.scene.add(normalizedRoot);
 
     normalizedRoot.updateMatrixWorld(true);
@@ -225,7 +328,7 @@ class NitoThreeViewport {
     };
 
     this.resetView();
-    this.modelStatus = `Orbit, pan, and zoom ready (${this.meshCount} mesh${this.meshCount === 1 ? "" : "es"})`;
+    this.modelStatus = `${this.labelCoordinatesMatchModel ? "Canonical label mesh ready" : "Orbit, pan, and zoom ready"} (${this.meshCount} mesh${this.meshCount === 1 ? "" : "es"})`;
     this.setStatus(this.modelStatus);
   }
 
@@ -337,8 +440,8 @@ class NitoThreeViewport {
     const bones = Object.entries(guideBones)
       .map(([name, value]) => ({
         name,
-        head: this.labelPointToThree(value?.head),
-        tail: this.labelPointToThree(value?.tail),
+        head: this.blenderPointToThree(value?.head),
+        tail: this.blenderPointToThree(value?.tail),
       }))
       .filter((bone) => bone.head && bone.tail && bone.head.distanceToSquared(bone.tail) > 0.000001);
 
@@ -347,23 +450,18 @@ class NitoThreeViewport {
       return;
     }
 
-    const labelPoints = bones.flatMap((bone) => [bone.head, bone.tail]);
-    const labelBox = new THREE.Box3().setFromPoints(labelPoints);
-    const labelCenter = labelBox.getCenter(new THREE.Vector3());
-    const labelSize = labelBox.getSize(new THREE.Vector3());
     const targetBox = this.frame.box;
-    const targetCenter = targetBox.getCenter(new THREE.Vector3());
     const targetSize = targetBox.getSize(new THREE.Vector3());
-    const ratios = ["x", "y", "z"]
-      .map((axis) => (labelSize[axis] > 0.000001 ? targetSize[axis] / labelSize[axis] : 0))
-      .filter((value) => Number.isFinite(value) && value > 0);
-    const labelScale = (ratios.length ? Math.min(...ratios) : 1) * 0.94;
     const targetRadius = Math.max(targetSize.length(), 1);
     const boneRadius = THREE.MathUtils.clamp(targetRadius * 0.006, 0.012, 0.04);
     const jointRadius = boneRadius * 2.15;
     const jointPoints = [];
-
-    const transformPoint = (point) => point.clone().sub(labelCenter).multiplyScalar(labelScale).add(targetCenter);
+    const transformPoint = this.labelCoordinatesMatchModel && this.modelCoordinateTransform
+      ? (point) => point
+          .clone()
+          .sub(this.modelCoordinateTransform.center)
+          .multiplyScalar(this.modelCoordinateTransform.scale)
+      : this.approximateLabelTransform(bones);
     const group = new THREE.Group();
     group.name = "NitoVerifiedSkeletonOverlay";
     group.visible = this.labelsVisible;
@@ -398,7 +496,22 @@ class NitoThreeViewport {
     );
   }
 
-  labelPointToThree(value) {
+  approximateLabelTransform(bones) {
+    const labelPoints = bones.flatMap((bone) => [bone.head, bone.tail]);
+    const labelBox = new THREE.Box3().setFromPoints(labelPoints);
+    const labelCenter = labelBox.getCenter(new THREE.Vector3());
+    const labelSize = labelBox.getSize(new THREE.Vector3());
+    const targetBox = this.frame.box;
+    const targetCenter = targetBox.getCenter(new THREE.Vector3());
+    const targetSize = targetBox.getSize(new THREE.Vector3());
+    const ratios = ["x", "y", "z"]
+      .map((axis) => (labelSize[axis] > 0.000001 ? targetSize[axis] / labelSize[axis] : 0))
+      .filter((value) => Number.isFinite(value) && value > 0);
+    const labelScale = (ratios.length ? Math.min(...ratios) : 1) * 0.94;
+    return (point) => point.clone().sub(labelCenter).multiplyScalar(labelScale).add(targetCenter);
+  }
+
+  blenderPointToThree(value) {
     if (!Array.isArray(value) || value.length < 3) return null;
     const [x, y, z] = value.map((item) => Number(item));
     if (![x, y, z].every(Number.isFinite)) return null;

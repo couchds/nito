@@ -27,54 +27,76 @@ GUIDE_BONE_LABELS = {
 
 
 class QWG_PT_panel(Panel):
-    bl_label = "Quadruped Walk"
+    bl_label = "Nito Labeling"
     bl_idname = "QWG_PT_panel"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
-    bl_category = "QWalk"
+    bl_category = "Nito"
 
     def draw(self, context):
-        """Draw the QWalk sidebar panel."""
+        """Draw the Nito sidebar panel."""
         layout = self.layout
         settings = context.scene.qwg_settings
         armature = active_armature(context)
+        has_mesh = self._has_selected_mesh(context)
+        has_guide = self._has_selected_guide(context)
 
-        layout.operator("qwg.create_quadruped_armature", icon="OUTLINER_OB_ARMATURE")
-        guide_row = layout.row()
-        guide_row.enabled = self._has_selected_mesh(context)
-        guide_row.operator("qwg.create_fit_guides", icon="EMPTY_AXIS")
+        guide_box = layout.box()
+        guide_box.label(text="Nito Guide", icon="EMPTY_AXIS")
+        guide_box.label(text="Place this skeleton for training labels.")
 
-        guide_build_row = layout.row()
-        guide_build_row.enabled = self._has_selected_guide(context)
-        guide_build_op = guide_build_row.operator("qwg.create_armature_from_guides", icon="ARMATURE_DATA")
+        guide_row = guide_box.row()
+        guide_row.enabled = has_mesh
+        guide_row.operator("qwg.create_fit_guides", text="Create Nito Guide", icon="EMPTY_AXIS")
+
+        guide_build_row = guide_box.row()
+        guide_build_row.enabled = has_guide
+        guide_build_op = guide_build_row.operator(
+            "qwg.create_armature_from_guides",
+            text="Generate Test Rig From Guide",
+            icon="ARMATURE_DATA",
+        )
         guide_build_op.symmetrize_legs = True
         guide_build_op.replace_existing_generated = True
 
-        fit_row = layout.row()
-        fit_row.enabled = self._has_selected_mesh(context)
-        fit_row.operator("qwg.create_fitted_quadruped_armature", icon="MOD_ARMATURE")
+        guide_bind_row = guide_box.row()
+        guide_bind_row.enabled = has_mesh and has_guide
+        guide_bind_row.operator("qwg.generate_bind_test_rig", text="Generate + Bind Test Rig", icon="MOD_ARMATURE")
+
+        if armature and armature.get("qwg_is_guide"):
+            self._draw_guide_status(guide_box, context)
+            guide_box.label(text="Edit guide bones, then generate a test rig.")
+            return
+
+        rig_box = layout.box()
+        rig_box.label(text="Nito Test Rig", icon="OUTLINER_OB_ARMATURE")
+        rig_box.label(text="Bind and pose this armature to check the label.")
+
+        starter_row = rig_box.row()
+        starter_row.operator("qwg.create_quadruped_armature", text="Create Starter Test Rig", icon="OUTLINER_OB_ARMATURE")
+
+        fit_row = rig_box.row()
+        fit_row.enabled = has_mesh
+        fit_row.operator("qwg.create_fitted_quadruped_armature", text="Draft Test Rig From Mesh", icon="MOD_ARMATURE")
 
         if not armature:
-            layout.label(text="Select an armature.")
-            return
-        if armature.get("qwg_is_guide"):
-            self._draw_guide_status(layout, context)
-            layout.label(text="Edit guide bones, then generate the armature.")
+            rig_box.label(text="Select a Nito guide or test rig.")
             return
 
-        row = layout.row(align=True)
-        row.operator("qwg.auto_map", icon="VIEWZOOM")
-        row.operator("qwg.generate_walk_cycle", icon="ARMATURE_DATA")
+        row = rig_box.row(align=True)
+        row.operator("qwg.auto_map", text="Map Bones", icon="VIEWZOOM")
+        row.operator("qwg.generate_walk_cycle", text="Pose Test Walk", icon="ARMATURE_DATA")
 
-        bind_row = layout.row()
-        bind_row.enabled = self._has_selected_mesh(context)
-        bind_row.operator("qwg.bind_selected_meshes", icon="MOD_ARMATURE")
+        bind_row = rig_box.row()
+        bind_row.enabled = has_mesh
+        bind_row.operator("qwg.bind_selected_meshes", text="Bind Mesh To Test Rig", icon="MOD_ARMATURE")
 
-        layout.operator("qwg.clear_cycle_keys", icon="TRASH")
-        layout.operator("qwg.set_base_pose", icon="PINNED")
+        row = rig_box.row(align=True)
+        row.operator("qwg.clear_cycle_keys", text="Clear Preview Keys", icon="TRASH")
+        row.operator("qwg.set_base_pose", text="Store Base Pose", icon="PINNED")
 
         box = layout.box()
-        box.label(text="Cycle")
+        box.label(text="Pose Test")
         row = box.row(align=True)
         row.prop(settings, "frame_start")
         row.prop(settings, "frame_end")
@@ -85,7 +107,7 @@ class QWG_PT_panel(Panel):
         self._draw_motion(layout, settings, armature)
 
         box = layout.box()
-        box.label(text="Axes")
+        box.label(text="Rig Axes")
         row = box.row(align=True)
         row.prop(settings, "forward_axis")
         row.prop(settings, "side_axis")
@@ -95,7 +117,7 @@ class QWG_PT_panel(Panel):
         fk_axis.prop(settings, "fk_bend_axis")
 
         box = layout.box()
-        box.label(text="Output")
+        box.label(text="Preview Output")
         box.prop(settings, "replace_existing")
         box.prop(settings, "add_cycles")
         box.prop(settings, "interpolation")
@@ -105,12 +127,12 @@ class QWG_PT_panel(Panel):
     def _draw_motion(self, layout, settings, armature):
         """Draw context-aware motion controls."""
         box = layout.box()
-        box.label(text="Foot Motion")
+        box.label(text="Foot Preview Motion")
         box.prop(settings, "stride_length")
         box.prop(settings, "step_height")
 
         box = layout.box()
-        box.label(text="Body Motion")
+        box.label(text="Body Preview Motion")
         box.prop(settings, "body_bob")
         box.prop(settings, "body_sway")
         box.prop(settings, "body_pitch")
@@ -131,7 +153,7 @@ class QWG_PT_panel(Panel):
         return any(obj.type == "MESH" for obj in context.selected_objects)
 
     def _has_selected_guide(self, context):
-        """Return whether any selected object is a QWalk guide armature."""
+        """Return whether any selected object is a Nito guide armature."""
         return any(obj.type == "ARMATURE" and obj.get("qwg_is_guide") for obj in context.selected_objects)
 
     def _active_guide_bone_name(self, context):
@@ -154,7 +176,7 @@ class QWG_PT_panel(Panel):
         """Draw the active guide bone label while editing a guide rig."""
         bone_name = self._active_guide_bone_name(context)
         box = layout.box()
-        box.label(text="Guide Bone")
+        box.label(text="Nito Guide Bone")
         if bone_name:
             box.label(text=GUIDE_BONE_LABELS.get(bone_name, bone_name), icon="BONE_DATA")
             box.label(text=bone_name)

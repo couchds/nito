@@ -461,7 +461,12 @@ class WorkflowStore:
             guide_bones = {}
 
         mesh_value = str(state.get("export_mesh") or label_data.get("mesh_file") or "").strip()
-        mesh_path = Path(mesh_value).expanduser() if mesh_value else label_path.with_suffix(".obj")
+        if mesh_value:
+            mesh_path = Path(mesh_value).expanduser()
+            if not mesh_path.is_absolute():
+                mesh_path = REPO_ROOT / "data" / "real_quadrupeds" / mesh_path
+        else:
+            mesh_path = label_path.with_suffix(".obj")
         mesh_url = self.artifact_url(str(mesh_path)) if mesh_path.exists() else ""
         split = str(label_data.get("split") or state.get("export_split") or label_path.parent.name or "").strip()
 

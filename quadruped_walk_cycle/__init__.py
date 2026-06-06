@@ -1,10 +1,10 @@
 bl_info = {
-    "name": "Quadruped Walk Cycle Generator",
+    "name": "Nito Blender Tools",
     "author": "couchds",
-    "version": (0, 5, 2),
+    "version": (0, 6, 0),
     "blender": (3, 6, 0),
-    "location": "View3D > Sidebar > QWalk",
-    "description": "Generate looping quadruped walk cycles for an armature using IK controls or FK leg chains.",
+    "location": "View3D > Sidebar > Nito",
+    "description": "Create Nito guide labels, generate test rigs, bind meshes, and preview quadruped motion.",
     "category": "Animation",
 }
 
@@ -34,6 +34,7 @@ from .operators import (
     QWG_OT_auto_map,
     QWG_OT_bind_selected_meshes,
     QWG_OT_clear_cycle_keys,
+    QWG_OT_generate_bind_test_rig,
     QWG_OT_generate_walk_cycle,
     QWG_OT_set_base_pose,
 )
@@ -55,6 +56,7 @@ CLASSES = (
     QWG_OT_create_fitted_quadruped_armature,
     QWG_OT_auto_map,
     QWG_OT_bind_selected_meshes,
+    QWG_OT_generate_bind_test_rig,
     QWG_OT_generate_walk_cycle,
     QWG_OT_clear_cycle_keys,
     QWG_OT_set_base_pose,

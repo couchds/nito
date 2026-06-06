@@ -2,7 +2,7 @@ import bpy
 from bpy.props import BoolProperty, EnumProperty, FloatProperty, StringProperty
 from bpy.types import Operator
 from math import cos, pi, sin
-from mathutils import Vector
+from mathutils import Matrix, Vector
 
 from .constants import FK_FIELDS, IK_FIELDS, LEG_ORDER
 from .rig_utils import store_base_pose
@@ -716,7 +716,7 @@ def active_mesh(context):
 
 
 def active_guide_armature(context):
-    """Return the active QWalk guide armature, or the first selected guide."""
+    """Return the active Nito guide armature, or the first selected guide."""
     if context.object and context.object.type == "ARMATURE" and context.object.get("qwg_is_guide"):
         return context.object
     for obj in context.selected_objects:
@@ -802,7 +802,7 @@ def leg_profile_point(profile, leg, leg_profile, point_key, x):
 
 
 def create_guide_armature(context, name, profile, origin, angle, source_mesh_name="", profile_key="MEDIUM"):
-    """Create an editable QWalk guide armature from a fitted profile."""
+    """Create an editable Nito guide armature from a fitted profile."""
     if context.object and context.object.mode != "OBJECT":
         bpy.ops.object.mode_set(mode="OBJECT")
 
@@ -1018,7 +1018,7 @@ def improve_front_leg_profile(leg_profile, body_length):
 
 
 def build_profile_from_guides(guide, symmetrize_legs=True, preferred_guide_side=None):
-    """Build a generated rig profile from an edited QWalk guide armature."""
+    """Build a generated rig profile from an edited Nito guide armature."""
     pelvis_head, pelvis_tail = guide_bone_pair(guide, GUIDE_SPINE_BONES["pelvis"])
     spine_head, spine_tail = guide_bone_pair(guide, GUIDE_SPINE_BONES["spine"])
     chest_head, chest_tail = guide_bone_pair(guide, GUIDE_SPINE_BONES["chest"])
@@ -1400,9 +1400,9 @@ def assign_bone_groups(armature_object):
     if not hasattr(armature_object.pose, "bone_groups"):
         return
 
-    control_group = armature_object.pose.bone_groups.new(name="QWalk Controls")
+    control_group = armature_object.pose.bone_groups.new(name="Nito Controls")
     control_group.color_set = "THEME09"
-    deform_group = armature_object.pose.bone_groups.new(name="QWalk Deform")
+    deform_group = armature_object.pose.bone_groups.new(name="Nito Deform")
     deform_group.color_set = "THEME04"
 
     control_names = {"root", "body"}
@@ -1495,7 +1495,7 @@ def refresh_ik_constraints(armature_object):
         if not all((foot_bone, upper_bone, pole_bone)):
             continue
 
-        constraint = next((item for item in foot_bone.constraints if item.type == "IK" and item.name == "QWalk IK"), None)
+        constraint = next((item for item in foot_bone.constraints if item.type == "IK" and item.name in {"Nito IK", "QWalk IK"}), None)
         if not constraint:
             continue
 
@@ -1686,7 +1686,7 @@ def create_standard_quadruped(
         for leg in LEG_ORDER:
             names = STANDARD_LEG_NAMES[leg]
             constraint = armature_object.pose.bones[names["foot"]].constraints.new(type="IK")
-            constraint.name = "QWalk IK"
+            constraint.name = "Nito IK"
             constraint.target = armature_object
             constraint.subtarget = names["ik"]
             constraint.pole_target = armature_object
@@ -1706,16 +1706,43 @@ def create_standard_quadruped(
     return armature_object
 
 
+def bake_object_transform_into_armature(context, armature):
+    """Bake a fitted armature object's transform into its rest bones."""
+    if context.object and context.object.mode != "OBJECT":
+        bpy.ops.object.mode_set(mode="OBJECT")
+
+    matrix = armature.matrix_world.copy()
+    if matrix == Matrix.Identity(4):
+        return
+
+    armature.data.transform(matrix)
+    armature.matrix_world = Matrix.Identity(4)
+    context.view_layer.update()
+
+
+def enter_pose_mode(context, armature):
+    """Select an armature and enter Pose Mode when Blender allows it."""
+    if context.object and context.object.mode != "OBJECT":
+        bpy.ops.object.mode_set(mode="OBJECT")
+    bpy.ops.object.select_all(action="DESELECT")
+    armature.select_set(True)
+    context.view_layer.objects.active = armature
+    try:
+        bpy.ops.object.mode_set(mode="POSE")
+    except RuntimeError:
+        pass
+
+
 class QWG_OT_create_quadruped_armature(Operator):
     bl_idname = "qwg.create_quadruped_armature"
-    bl_label = "Create Quadruped Armature"
-    bl_description = "Create a starter quadruped armature compatible with QWalk"
+    bl_label = "Create Starter Test Rig"
+    bl_description = "Create a starter Nito quadruped test rig"
     bl_options = {"REGISTER", "UNDO"}
 
     armature_name: StringProperty(
         name="Name",
         description="Name for the generated armature object and data",
-        default="QWalk_Quadruped",
+        default="Nito_Quadruped_Test_Rig",
     )
     scale: FloatProperty(
         name="Scale",
@@ -1747,12 +1774,12 @@ class QWG_OT_create_quadruped_armature(Operator):
         default="STICK",
     )
     map_after_create: BoolProperty(
-        name="Map for QWalk",
-        description="Fill QWalk bone mapping fields after creating the armature",
+        name="Map for Nito",
+        description="Fill Nito bone mapping fields after creating the armature",
         default=True,
     )
     def execute(self, context):
-        """Create the standard armature and optionally map it for QWalk."""
+        """Create the standard test rig and optionally map it for Nito."""
         armature = create_standard_quadruped(
             context,
             self.armature_name,
@@ -1765,14 +1792,14 @@ class QWG_OT_create_quadruped_armature(Operator):
         if self.map_after_create:
             apply_standard_mapping(context.scene.qwg_settings)
 
-        self.report({"INFO"}, f"Created quadruped armature {armature.name}.")
+        self.report({"INFO"}, f"Created Nito test rig {armature.name}.")
         return {"FINISHED"}
 
 
 class QWG_OT_create_fitted_quadruped_armature(Operator):
     bl_idname = "qwg.create_fitted_quadruped_armature"
-    bl_label = "Create Fitted Quadruped Armature"
-    bl_description = "Create a quadruped armature scaled and placed to the selected mesh bounds"
+    bl_label = "Create Draft Test Rig From Mesh"
+    bl_description = "Create a draft Nito test rig scaled and placed to the selected mesh bounds"
     bl_options = {"REGISTER", "UNDO"}
 
     armature_name: StringProperty(
@@ -1828,8 +1855,8 @@ class QWG_OT_create_fitted_quadruped_armature(Operator):
         default="STICK",
     )
     map_after_create: BoolProperty(
-        name="Map for QWalk",
-        description="Fill QWalk bone mapping fields after creating the armature",
+        name="Map for Nito",
+        description="Fill Nito bone mapping fields after creating the armature",
         default=True,
     )
     @classmethod
@@ -1867,7 +1894,7 @@ class QWG_OT_create_fitted_quadruped_armature(Operator):
             top_percentile=self.top_percentile,
         )
 
-        armature_name = self.armature_name.strip() or f"{mesh_object.name}_QWalk_Rig"
+        armature_name = self.armature_name.strip() or f"{mesh_object.name}_Nito_Test_Rig"
         armature = create_standard_quadruped(
             context,
             armature_name,
@@ -1884,20 +1911,24 @@ class QWG_OT_create_fitted_quadruped_armature(Operator):
         rotated_origin = rotate_z(origin, angle)
         armature.rotation_euler.z = angle
         armature.location = rotated_origin
+        bake_object_transform_into_armature(context, armature)
 
+        if self.add_ik_constraints:
+            refresh_ik_constraints(armature)
         store_base_pose(armature)
         if self.map_after_create:
             apply_standard_mapping(context.scene.qwg_settings)
+        enter_pose_mode(context, armature)
 
         axis_note = f" using {resolved_forward_axis}" if self.mesh_forward_axis == "AUTO" else ""
-        self.report({"INFO"}, f"Created fitted {profile['label']} armature for {mesh_object.name}{axis_note}.")
+        self.report({"INFO"}, f"Created draft Nito {profile['label']} test rig for {mesh_object.name}{axis_note}.")
         return {"FINISHED"}
 
 
 class QWG_OT_create_fit_guides(Operator):
     bl_idname = "qwg.create_fit_guides"
-    bl_label = "Create Fitting Guides"
-    bl_description = "Create an editable QWalk guide armature from the selected mesh"
+    bl_label = "Create Nito Guide"
+    bl_description = "Create an editable Nito guide armature from the selected mesh"
     bl_options = {"REGISTER", "UNDO"}
 
     guide_name: StringProperty(
@@ -1972,7 +2003,7 @@ class QWG_OT_create_fit_guides(Operator):
             top_percentile=self.top_percentile,
         )
 
-        guide_name = self.guide_name.strip() or f"{mesh_object.name}_QWalk_Guides"
+        guide_name = self.guide_name.strip() or f"{mesh_object.name}_Nito_Guide"
         guide = create_guide_armature(
             context,
             guide_name,
@@ -1984,14 +2015,14 @@ class QWG_OT_create_fit_guides(Operator):
         )
         guide["qwg_fit_forward_axis"] = resolved_forward_axis
         axis_note = f" using {resolved_forward_axis}" if self.mesh_forward_axis == "AUTO" else ""
-        self.report({"INFO"}, f"Created editable QWalk guides for {mesh_object.name}{axis_note}.")
+        self.report({"INFO"}, f"Created editable Nito guide for {mesh_object.name}{axis_note}.")
         return {"FINISHED"}
 
 
 class QWG_OT_create_armature_from_guides(Operator):
     bl_idname = "qwg.create_armature_from_guides"
-    bl_label = "Generate Armature From Guides"
-    bl_description = "Generate a QWalk armature from the selected editable guide armature"
+    bl_label = "Generate Test Rig From Guide"
+    bl_description = "Generate a Nito test rig from the selected editable guide armature"
     bl_options = {"REGISTER", "UNDO"}
 
     armature_name: StringProperty(
@@ -2016,18 +2047,18 @@ class QWG_OT_create_armature_from_guides(Operator):
         default="STICK",
     )
     map_after_create: BoolProperty(
-        name="Map for QWalk",
-        description="Fill QWalk bone mapping fields after creating the armature",
+        name="Map for Nito",
+        description="Fill Nito bone mapping fields after creating the armature",
         default=True,
     )
     hide_guides_after_create: BoolProperty(
         name="Hide Guides",
-        description="Hide the guide armature after generating the final rig",
+        description="Hide the guide armature after generating the test rig",
         default=True,
     )
     replace_existing_generated: BoolProperty(
         name="Replace Previous Rig",
-        description="Delete older QWalk rigs generated from the same guide",
+        description="Delete older Nito test rigs generated from the same guide",
         default=True,
         options={"SKIP_SAVE"},
     )
@@ -2040,14 +2071,14 @@ class QWG_OT_create_armature_from_guides(Operator):
 
     @classmethod
     def poll(cls, context):
-        """Enable the operator when a QWalk guide armature is active or selected."""
+        """Enable the operator when a Nito guide armature is active or selected."""
         return active_guide_armature(context) is not None
 
     def execute(self, context):
-        """Create the final QWalk armature from edited guide bones."""
+        """Create the Nito test rig from edited guide bones."""
         guide = active_guide_armature(context)
         if not guide:
-            self.report({"ERROR"}, "Select a QWalk guide armature.")
+            self.report({"ERROR"}, "Select a Nito guide armature.")
             return {"CANCELLED"}
         preferred_guide_side = active_guide_leg_side(guide)
         if guide.mode != "OBJECT":
@@ -2060,7 +2091,12 @@ class QWG_OT_create_armature_from_guides(Operator):
             return {"CANCELLED"}
 
         profile_key = guide.get("qwg_profile", "MEDIUM")
-        armature_name = self.armature_name.strip() or f"{guide.name}_Rig"
+        guide_base = guide.name
+        for suffix in ("_Nito_Guide", "_QWalk_Guides", "_Guide", "_Guides"):
+            if guide_base.endswith(suffix):
+                guide_base = guide_base[: -len(suffix)]
+                break
+        armature_name = self.armature_name.strip() or f"{guide_base}_Nito_Test_Rig"
         removed_count = 0
         if self.replace_existing_generated:
             removed_count = remove_previous_generated_rigs(guide, armature_name)
@@ -2083,6 +2119,7 @@ class QWG_OT_create_armature_from_guides(Operator):
         if self.symmetrize_legs:
             mirror_error = enforce_mirrored_leg_pairs(armature)
             armature["qwg_mirror_yz_error_before_enforce"] = mirror_error
+        bake_object_transform_into_armature(context, armature)
 
         if self.add_ik_constraints:
             refresh_ik_constraints(armature)
@@ -2095,8 +2132,9 @@ class QWG_OT_create_armature_from_guides(Operator):
             guide.select_set(False)
             armature.select_set(True)
             context.view_layer.objects.active = armature
+        enter_pose_mode(context, armature)
 
         mode_label = f"mirrored leg pairs (fixed {mirror_error:.4f}m)" if self.symmetrize_legs else "asymmetric leg guides"
         replace_label = f" Replaced {removed_count} previous rig(s)." if removed_count else ""
-        self.report({"INFO"}, f"Generated QWalk armature from {guide.name} with {mode_label}.{replace_label}")
+        self.report({"INFO"}, f"Generated Nito test rig from {guide.name} with {mode_label}.{replace_label}")
         return {"FINISHED"}

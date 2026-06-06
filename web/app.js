@@ -714,12 +714,14 @@ function modelPanel(sample) {
   const remoteUrl = model.remote_url || "";
   const viewerUrl = model.viewer_url || "";
   const labelUrl = verifiedLabel.url || "";
-  const displayUrl = localUrl || remoteUrl || viewerUrl;
+  const labelMeshUrl = verifiedLabel.mesh_url || "";
+  const displayUrl = localUrl || remoteUrl || viewerUrl || labelMeshUrl;
   const previewUrl = model.preview_proxy_url || model.preview_url || "";
   const safeDisplayUrl = escapeHtml(displayUrl);
   const safeRemoteUrl = escapeHtml(remoteUrl);
   const safePreviewUrl = escapeHtml(previewUrl);
   const safeLabelUrl = escapeHtml(labelUrl);
+  const safeLabelMeshUrl = escapeHtml(labelMeshUrl);
   const fallbackUrl = !localUrl && remoteUrl && viewerUrl && viewerUrl !== remoteUrl ? viewerUrl : "";
   const safeFallbackUrl = escapeHtml(fallbackUrl);
   const displayType = modelType(model, displayUrl);
@@ -732,7 +734,7 @@ function modelPanel(sample) {
       ${labelUrl ? `<p class="detail-meta">Verified label exported: <a href="${safeLabelUrl}" target="_blank" rel="noreferrer">${escapeHtml(verifiedLabel.name || "label JSON")}</a></p>` : ""}
     `;
   }
-  const canEmbed = ["glb", "gltf"].includes(displayType);
+  const canEmbed = ["glb", "gltf", "obj"].includes(displayType) || Boolean(labelMeshUrl);
   return `
     <h4>3D Model</h4>
     <div class="model-panel ${isRemoteOnly ? "is-remote-only" : ""}">
@@ -761,6 +763,7 @@ function modelPanel(sample) {
               data-model-src="${safeDisplayUrl}"
               data-fallback-src="${safeFallbackUrl}"
               data-label-src="${safeLabelUrl}"
+              data-label-mesh-src="${safeLabelMeshUrl}"
               data-poster-src="${safePreviewUrl}"
             >
               <div class="three-toolbar" aria-label="3D model viewport controls">
@@ -795,11 +798,13 @@ function modelPanel(sample) {
         ${viewerUrl && viewerUrl !== displayUrl ? `<a href="${escapeHtml(viewerUrl)}" target="_blank" rel="noreferrer">Proxy URL</a>` : ""}
         ${previewUrl ? `<a href="${safePreviewUrl}" target="_blank" rel="noreferrer">Open Tripo render</a>` : ""}
         ${labelUrl ? `<a href="${safeLabelUrl}" target="_blank" rel="noreferrer">Open label JSON</a>` : ""}
+        ${labelMeshUrl ? `<a href="${safeLabelMeshUrl}" target="_blank" rel="noreferrer">Open label mesh</a>` : ""}
       </div>
       <p class="detail-meta">
         ${escapeHtml(localUrl ? model.name || model.file : "Remote Tripo GLB")}
         ${isRemoteOnly ? " | browser preview may depend on Tripo CORS" : ""}
         ${labelUrl ? ` | verified skeleton overlay${labelBoneCount ? ` (${labelBoneCount} bones)` : ""}` : ""}
+        ${labelMeshUrl ? " | viewport uses canonical label mesh for Blender alignment" : ""}
       </p>
     </div>
   `;

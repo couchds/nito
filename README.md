@@ -2,7 +2,7 @@
 
 Nito is a local training-asset pipeline for quadruped characters. It helps create prompt-backed samples, generate multi-view reference art, turn those views into Tripo3D models, prepare the models for Blender skeleton placement, and collect verified labels for training a guide initializer that can place skeleton landmarks on new meshes.
 
-The repo still includes the QWalk Blender add-on that powers the manual rigging and walk-cycle workflow. QWalk can generate looping walk-cycle keys for four-legged armatures, animate foot or paw IK target bones when the rig has them, or fall back to simple FK rotation on upper/lower/foot bone chains.
+The repo includes the Nito Blender Tools add-on for manual guide placement and rig checks. The Nito guide is the training label skeleton you edit by hand; the generated Nito test rig is a normal Blender armature you can bind to the mesh, inspect in Pose Mode, and use for temporary walk previews.
 
 ## Nito Workflow
 
@@ -15,28 +15,30 @@ The repo still includes the QWalk Blender add-on that powers the manual rigging 
 
 ## Blender Add-on
 
-Use this section when you want to install the bundled Blender add-on directly or animate a manually prepared quadruped rig.
+Use this section when you want to install the bundled Blender add-on directly, place a training guide, or test a generated quadruped rig.
 
 ## Install
 
 1. Zip the `quadruped_walk_cycle` folder, or keep the folder as-is for development.
 2. In Blender, open `Edit > Preferences > Add-ons > Install...`.
 3. Select the zip file or the `quadruped_walk_cycle/__init__.py` file.
-4. Enable **Quadruped Walk Cycle Generator**.
-5. Select an armature and open `View3D > Sidebar > QWalk`.
+4. Enable **Nito Blender Tools**.
+5. Select a mesh, guide, or armature and open `View3D > Sidebar > Nito`.
 
 ## Basic Use
 
-1. Select the animal armature, or click **Create Quadruped Armature** to make a starter rig.
-2. Click **Auto Map Bones** when using your own rig. The generated starter rig maps itself automatically.
-3. Review the mapped fields. Auto mapping is best-effort because rigs use wildly different naming conventions.
-4. Choose a gait: Compact Walk, Walk, Trot, Pace, or Bound.
-5. Choose generation mode:
+1. Select the animal mesh and click **Create Nito Guide**.
+2. Edit the guide bones until the skeleton landmarks match the mesh.
+3. Click **Generate + Bind Test Rig** to create a normal Blender armature, bind the selected mesh, and enter Pose Mode.
+4. Use **Map Bones** when using your own rig. Generated Nito test rigs map themselves automatically.
+5. Review the mapped fields. Auto mapping is best-effort because rigs use wildly different naming conventions.
+6. Choose a gait: Compact Walk, Walk, Trot, Pace, or Bound.
+7. Choose generation mode:
    - **Auto**: uses IK target bones where mapped, otherwise FK chains.
    - **IK Targets**: animates mapped foot or paw controls by location.
    - **FK Chains**: animates mapped upper, lower, and foot bones by Euler rotation.
-6. Set stride, lift, frame range, and axes.
-7. Click **Generate Walk Cycle**.
+8. Set stride, lift, frame range, and axes.
+9. Click **Pose Test Walk**.
 
 The add-on adds cyclic F-curve modifiers by default so the generated cycle loops past the selected frame range.
 
@@ -63,9 +65,9 @@ The generator assumes one local axis is forward, one is side-to-side, and one is
 
 If the motion goes sideways, backwards, or downward, change the axis settings before regenerating.
 
-## Generated Starter Armature
+## Generated Test Rig
 
-Click **Create Quadruped Armature** to generate a simple +Y-forward, Z-up quadruped rig. The default display is **Stick**, which reads more like a rig than a blocky proxy animal. The operator has a **Profile** option; `Medium Quadruped` is the default, `Stocky Quadruped` is better for compact goat/sheep/ram-like bodies, and `Horse` provides a longer body, neck, and limb template.
+Click **Create Starter Test Rig** to generate a simple +Y-forward, Z-up quadruped rig. The default display is **Stick**, which reads more like a rig than a blocky proxy animal. The operator has a **Profile** option; `Medium Quadruped` is the default, `Stocky Quadruped` is better for compact goat/sheep/ram-like bodies, and `Horse` provides a longer body, neck, and limb template.
 
 The generated rig includes:
 
@@ -79,37 +81,41 @@ Hidden non-deforming shoulder/hip helper bones keep the limb chains parented cle
 IK and pole controls are created with their bone heads on the actual target points so Blender's IK solver does not pull the neutral pose away from the fitted skeleton. Generated foot controls are aligned to the rig's local axes, and walk-cycle location offsets are converted from armature space into each control bone's local channels before keying.
 Generated IK constraints set a neutral pole angle so Pose Mode matches the fitted rest chain instead of twisting the leg as soon as constraints are added.
 
-The starter armature is meant as a clean animation test rig and naming template, not a production-ready anatomy rig. Use Blender's operator redo panel after creation if you want a different profile or Octahedral, B-Bone, or Wire display instead.
+The generated armature is meant as a clean animation test rig and naming template, not a production-ready anatomy rig. Use Blender's operator redo panel after creation if you want a different profile or Octahedral, B-Bone, or Wire display instead.
 
 New generated rigs open in Pose Mode with the main animation controls selected. The control widgets are stored as hidden mesh objects in a `*_widgets` collection and assigned as custom bone shapes.
 
-## Mesh Fitting Guides
+Fitted Nito test rigs bake their mesh-alignment transform into the armature rest bones at creation time. The armature object stays at identity, so Object Mode, Pose Mode, and Edit Mode use the same visible skeleton placement.
 
-Select a mesh and click **Create Fitting Guides** to create an editable QWalk guide armature. This is the preferred fitting workflow:
+## Nito Guides
 
-1. Create fitting guides from the mesh.
+Select a mesh and click **Create Nito Guide** to create an editable Nito guide armature. This is the preferred fitting workflow:
+
+1. Create a Nito guide from the mesh.
 2. Edit the guide bones in Blender Edit Mode until the skeleton landmarks sit where you want them.
-3. Click **Generate Armature From Guides** to create the final QWalk rig.
-4. Select the mesh, Shift-select the final QWalk rig so the rig is active, then click **Bind Selected Meshes To Rig**.
-5. Generate the walk cycle on the final rig.
+3. Click **Generate Test Rig From Guide** to create the Nito test rig.
+4. Select the mesh, Shift-select the Nito test rig so the rig is active, then click **Bind Mesh To Test Rig**.
+5. Use **Pose Test Walk** or Blender Pose Mode to check whether the rig bends the way you expect.
+
+The **Generate + Bind Test Rig** button combines steps 3 and 4 when a Nito guide and mesh are both selected.
 
 The guide initializer still estimates the ground, main torso span, upper back surface, foot contact areas, and broad body type. Those guesses are only a starting point. The final generated armature comes from the edited guide bones, which is more reliable than trying to infer hidden shoulder, hip, knee, and ankle positions from a surface mesh alone.
 
-By default, **Generate Armature From Guides** mirrors each left/right leg pair from one side-profile while preserving the edited guide joint positions. When guides were created by this version, QWalk detects which overlaid side changed from the generated starting point; for older guides it uses the active left/right guide bone as a hint. This avoids crossed duplicate leg chains when fitting from side view. Disable **Mirror Leg Pairs** in the operator redo panel only when you intentionally want asymmetric left/right limb placement.
+By default, **Generate Test Rig From Guide** mirrors each left/right leg pair from one side-profile while preserving the edited guide joint positions. When guides were created by this version, Nito detects which overlaid side changed from the generated starting point; for older guides it uses the active left/right guide bone as a hint. This avoids crossed duplicate leg chains when fitting from side view. Disable **Mirror Leg Pairs** in the operator redo panel only when you intentionally want asymmetric left/right limb placement.
 
-The sidebar button always runs with mirrored leg pairs and replacement enabled. In mirrored mode, guide landmarks define the body span, shoulder/hip placement, hoof contact, and visible joint bends. QWalk only adds a small fallback bend when a guide chain is nearly straight. After the rig is generated, QWalk also enforces matching side-profile coordinates on both front and rear leg pairs. The guide generator replaces older rigs generated from the same guide by default, which prevents stale `*_Rig.001` armatures from overlapping the newest rig and making the leg chains look unsymmetrical.
+The sidebar button always runs with mirrored leg pairs and replacement enabled. In mirrored mode, guide landmarks define the body span, shoulder/hip placement, hoof contact, and visible joint bends. Nito only adds a small fallback bend when a guide chain is nearly straight. After the rig is generated, Nito also enforces matching side-profile coordinates on both front and rear leg pairs. The guide generator replaces older rigs generated from the same guide by default, which prevents stale `*_Rig.001` armatures from overlapping the newest rig and making the leg chains look unsymmetrical.
 
-The guide armature is hidden by default after **Generate Armature From Guides** so the viewport shows the final rig cleanly. Unhide the guide object in the Outliner if you want to edit and regenerate.
+The guide armature is hidden by default after **Generate Test Rig From Guide** so the viewport shows the test rig cleanly. Unhide the guide object in the Outliner if you want to edit and regenerate.
 
-When a guide armature is selected, the QWalk panel shows the active guide bone label, such as `Head`, `Neck`, or `Front Left Hoof`, so you can tell which landmark you are placing.
+When a guide armature is selected, the Nito panel shows the active guide bone label, such as `Head`, `Neck`, or `Front Left Hoof`, so you can tell which landmark you are placing.
 
-The older **Create Fitted Quadruped Armature** button still creates a direct one-shot fitted armature, but it is best treated as a quick draft rather than the main workflow.
+The **Draft Test Rig From Mesh** button still creates a direct one-shot fitted armature, but it is best treated as a quick draft rather than the main workflow.
 
-Binding defaults to QWalk's nearest-bone weights, which creates real vertex groups and an Armature modifier without relying on Blender's heat weighting. The QWalk binder biases torso, head, and belly vertices away from accidental leg influence, keeps central underbody vertices on the body instead of a left or right leg, limits each vertex to a plausible leg column before blending, then prunes weak leftover weights that can make horns, mouths, loose belly fur, or the wrong leg follow the moving feet. Use the operator redo panel if you want to try Blender Automatic instead. For production results, expect to clean up vertex weights around shoulders, hips, hooves, horns, and dense fur.
+Binding defaults to Nito's nearest-bone weights, which creates real vertex groups and an Armature modifier without relying on Blender's heat weighting. The Nito binder biases torso, head, and belly vertices away from accidental leg influence, keeps central underbody vertices on the body instead of a left or right leg, limits each vertex to a plausible leg column before blending, then prunes weak leftover weights that can make horns, mouths, loose belly fur, or the wrong leg follow the moving feet. Use the operator redo panel if you want to try Blender Automatic instead. For production results, expect to clean up vertex weights around shoulders, hips, hooves, horns, and dense fur.
 
 ## Synthetic ML Dataset
 
-The `scripts/generate_synthetic_quadrupeds.py` script creates rough synthetic quadruped OBJ meshes with exact QWalk guide labels. This is intended as seed data for an ML guide initializer, not as finished animal artwork.
+The `scripts/generate_synthetic_quadrupeds.py` script creates rough synthetic quadruped OBJ meshes with exact Nito guide labels. This is intended as seed data for an ML guide initializer, not as finished animal artwork.
 
 Generate a 1,000-sample starter dataset:
 
@@ -120,7 +126,7 @@ python scripts/generate_synthetic_quadrupeds.py --count 1000 --out data/syntheti
 Each sample writes:
 
 - an `.obj` proxy mesh
-- a `.json` label file with QWalk guide bone head/tail coordinates
+- a `.json` label file with Nito guide bone head/tail coordinates
 - `animal_type`, `morphology_type`, and mesh-space forward/left/up axes
 - a root `manifest.jsonl` and `dataset_info.json`
 
@@ -132,13 +138,13 @@ By default generated samples are +Y-forward and Z-up. This is the preferred trai
 python scripts/generate_synthetic_quadrupeds.py --count 20 --out data/synthetic_quadrupeds --random-yaw
 ```
 
-OBJ files are mesh-only and do not contain Blender armatures. To inspect a sample with its labeled QWalk guide bones, run the Blender helper against the matching `.json` label file:
+OBJ files are mesh-only and do not contain Blender armatures. To inspect a sample with its labeled Nito guide bones, run the Blender helper against the matching `.json` label file:
 
 ```powershell
 blender --python scripts/import_synthetic_quadruped_sample.py -- data/synthetic_quadrupeds/train/syn_000000.json
 ```
 
-The helper imports the OBJ mesh with `Forward=Y` and `Up=Z`, creates an editable QWalk guide armature from the JSON label coordinates, selects both objects, and stores the synthetic `animal_type` and `morphology_type` on the guide object. If you import raw OBJ files manually, use the same `Forward=Y` and `Up=Z` axis settings.
+The helper imports the OBJ mesh with `Forward=Y` and `Up=Z`, creates an editable Nito guide armature from the JSON label coordinates, selects both objects, and stores the synthetic `animal_type` and `morphology_type` on the guide object. If you import raw OBJ files manually, use the same `Forward=Y` and `Up=Z` axis settings.
 
 Train a first PointNet-style guide initializer from the synthetic dataset:
 
@@ -148,7 +154,7 @@ python -m venv .venv
 .\.venv\Scripts\python.exe scripts/train_guide_initializer.py --data data/synthetic_quadrupeds --epochs 40
 ```
 
-The trainer samples point clouds from the OBJ meshes, predicts the 23 guide points needed to reconstruct the QWalk guide bones, and uses `animal_type` plus `morphology_type` as auxiliary classification tasks. Training artifacts are written under `models/qwalk_guide_initializer/`, including `qwalk_guide_initializer.pt`, `metrics.json`, and a small `test_predictions_preview.jsonl`.
+The trainer samples point clouds from the OBJ meshes, predicts the 23 guide points needed to reconstruct the Nito guide bones, and uses `animal_type` plus `morphology_type` as auxiliary classification tasks. Training artifacts are written under `models/qwalk_guide_initializer/`, including `qwalk_guide_initializer.pt`, `metrics.json`, and a small `test_predictions_preview.jsonl`.
 
 Real labels are treated as ground truth and are only loaded from `--real-data` when their JSON has `verified_label: true`. Use `scripts/export_qwalk_guide_label.py --verified` only after the guide placement has been visually reviewed and corrected in Blender. Candidate labels can still be tested with `--allow-unverified-real`, but they should not be used for model training.
 
@@ -163,7 +169,7 @@ The `scripts/automated_training_workflow.py` script scaffolds Nito's end-to-end 
 3. Submit a multiview-to-model task to Tripo3D from those generated views.
 4. Poll and download the generated model before Tripo result URLs expire.
 5. Import the model into Blender.
-6. Create a candidate QWalk guide and render multi-view review images.
+6. Create a candidate Nito guide and render multi-view review images.
 7. Use `skills/qwalk-gold-labeler/SKILL.md` to iterate until the label is perfect.
 8. Export a verified real training label.
 
@@ -201,7 +207,7 @@ For local batch generation, use `run-batch`. It creates `N` catalog-backed sampl
   --seed 42
 ```
 
-Add `--prepare-label-work` to immediately import each downloaded model into Blender, create candidate QWalk guides, and render review images for manual correction. Use `--dry-run` to create local sample state and print the planned random face counts without calling OpenAI or Tripo3D.
+Add `--prepare-label-work` to immediately import each downloaded model into Blender, create candidate Nito guides, and render review images for manual correction. Use `--dry-run` to create local sample state and print the planned random face counts without calling OpenAI or Tripo3D.
 
 Start Nito when you want a dashboard over the same batch runner:
 
@@ -211,7 +217,7 @@ Start Nito when you want a dashboard over the same batch runner:
 
 Then open `http://127.0.0.1:8765`. The Home page shows actively running UI jobs and samples that have not reached the verified training-export state yet. Nito uses route-backed pages for `/samples`, `/samples/<sample_id>`, `/batches`, `/batches/<run_id>`, `/create`, `/jobs`, and `/settings`, so detail pages can be opened directly.
 
-Use the Create page to make a prompt-backed sample with a two-step flow: enter the character prompt, then choose the skeleton/body type from the visual cards. The original prompt and generated front/left/right/back OpenAI prompts are stored in the sample workflow state. Each sample detail page shows the expected rig family, bone chains, pipeline state, reference images, Blender review renders, and downloaded GLB/GLTF model when those artifacts exist. After a verified label is exported, the 3D viewport adds a **Skeleton** toggle that overlays the exported guide bones on the model. Batches remain candidate training sets, and a sample can appear in multiple batches because membership is computed from saved batch summaries.
+Use the Create page to make a prompt-backed sample with a two-step flow: enter the character prompt, then choose the skeleton/body type from the visual cards. The original prompt and generated front/left/right/back OpenAI prompts are stored in the sample workflow state. Each sample detail page shows the expected rig family, bone chains, pipeline state, reference images, Blender review renders, and downloaded GLB/GLTF model when those artifacts exist. After a verified label is exported, the 3D viewport adds a **Skeleton** toggle and loads the exported canonical OBJ label mesh so the overlay matches the Blender label-work coordinate frame. Batches remain candidate training sets, and a sample can appear in multiple batches because membership is computed from saved batch summaries.
 
 Tripo submission uses the saved OpenAI reference images directly. `submit-tripo` uploads the local `front`, `left`, `right`, and `back` files, sends them to Tripo in the required `front`, `left`, `back`, `right` order, and stores the returned model task id in the sample workflow state.
 
@@ -235,7 +241,7 @@ Predict guide bones for an OBJ mesh:
 .\.venv\Scripts\python.exe scripts/predict_guide_initializer.py data/synthetic_quadrupeds/train/syn_000007.obj --checkpoint models/qwalk_guide_initializer/qwalk_guide_initializer.pt --mesh-forward-axis AUTO
 ```
 
-This writes a sibling `*.qwalk_prediction.json` file with predicted guide points, reconstructed QWalk guide bones, animal probabilities, and morphology probabilities. The predictor rotates the mesh into +Y-forward canonical space before inference, then rotates predictions back. `AUTO` uses the dominant horizontal extent; pass `POS_X`, `NEG_X`, `POS_Y`, or `NEG_Y` when you know the true tail-to-head axis. The predictor also applies a small postprocess pass by default to mirror leg pairs, keep centerline bones centered, ground the feet, and keep limb joints above the ground plane.
+This writes a sibling `*.qwalk_prediction.json` file with predicted guide points, reconstructed Nito guide bones, animal probabilities, and morphology probabilities. The predictor rotates the mesh into +Y-forward canonical space before inference, then rotates predictions back. `AUTO` uses the dominant horizontal extent; pass `POS_X`, `NEG_X`, `POS_Y`, or `NEG_Y` when you know the true tail-to-head axis. The predictor also applies a small postprocess pass by default to mirror leg pairs, keep centerline bones centered, ground the feet, and keep limb joints above the ground plane.
 
 Evaluate a saved checkpoint:
 
@@ -254,7 +260,7 @@ If Blender is on your `PATH`, `blender --python ...` works too. The same import 
 ## Notes
 
 - **Replace Keys** removes existing location/Euler rotation keys on mapped bones only inside the selected frame range.
-- **Set Base Pose** stores the current mapped transforms as the neutral pose used by future generations.
+- **Store Current Pose As Base** stores the current mapped transforms as the neutral pose used by future generations.
 - IK walk motion is clamped per leg from the rest chain length so compact fitted rigs are not overdriven by the default stride and lift values.
 - **Compact Walk** is the default for goat, sheep, ram, and other stocky rigs. It uses a grounded four-beat order, shorter rear reach, lower foot lift, and reduced body bob compared with the generic walk.
 - Generated IK constraints use target rotation so hoof/end-effector bones stay more controlled instead of freely twisting through the IK solve.
@@ -274,4 +280,4 @@ Blender loads the add-on from `quadruped_walk_cycle/__init__.py`, while the impl
 - `skeleton.py`: starter quadruped armature generation
 - `properties.py`: Blender scene settings
 - `operators.py`: auto-map, generate, and clear operators
-- `ui.py`: QWalk sidebar panel
+- `ui.py`: Nito sidebar panel
