@@ -136,6 +136,36 @@ def draw_wrapped_text(layout, text, width):
         layout.label(text=line)
 
 
+def guide_short_help(bone_name):
+    """Return a very short sidebar-safe placement hint."""
+    if bone_name == "qwg_guide_pelvis":
+        return "Hip / rear-leg anchor"
+    if bone_name == "qwg_guide_spine":
+        return "Middle back axis"
+    if bone_name == "qwg_guide_chest":
+        return "Shoulder / chest anchor"
+    if bone_name == "qwg_guide_neck":
+        return "Neck centerline"
+    if bone_name == "qwg_guide_head":
+        return "Skull direction"
+    if bone_name == "qwg_guide_tail":
+        return "Tail root line"
+
+    parts = bone_name.split("_")
+    if len(parts) < 5:
+        return "Guide landmark"
+    limb_region = parts[2]
+    segment = parts[-1]
+    region_label = "Front" if limb_region == "front" else "Rear"
+    segment_labels = {
+        "upper": "upper limb",
+        "lower": "lower limb",
+        "foot": "foot contact",
+    }
+    segment_label = segment_labels.get(segment, "limb")
+    return f"{region_label} {segment_label}"
+
+
 class QWG_OT_show_guide_bone_help(Operator):
     bl_idname = "qwg.show_guide_bone_help"
     bl_label = "Nito Bone Placement Notes"
@@ -146,7 +176,7 @@ class QWG_OT_show_guide_bone_help(Operator):
 
     def invoke(self, context, event):
         """Open a wider dialog for long-form placement guidance."""
-        return context.window_manager.invoke_props_dialog(self, width=560)
+        return context.window_manager.invoke_props_dialog(self, width=680)
 
     def draw(self, context):
         """Draw long-form placement help in a dialog."""
@@ -158,21 +188,21 @@ class QWG_OT_show_guide_bone_help(Operator):
         if self.bone_name:
             layout.label(text=self.bone_name)
         if not help_data:
-            draw_wrapped_text(layout, "No placement notes are available for this bone yet.", width=72)
+            draw_wrapped_text(layout, "No placement notes are available for this bone yet.", width=46)
             return
 
         for label, key in (("Role", "role"), ("Head placement", "head"), ("Tail placement", "tail"), ("Common checks", "check")):
             box = layout.box()
             box.label(text=label)
-            draw_wrapped_text(box, help_data[key], width=72)
+            draw_wrapped_text(box, help_data[key], width=46)
 
         if is_leg_guide_bone(self.bone_name):
             box = layout.box()
             box.label(text="Side-view note")
             draw_wrapped_text(
                 box,
-                "Left and right legs often overlap in a side view. Correct the visible chain cleanly; Generate Test Rig From Guide mirrors leg pairs by default unless you disable Mirror Leg Pairs.",
-                width=72,
+                "Left and right legs often overlap in a side view. Correct the visible chain cleanly; Preview Rig From Guide mirrors leg pairs by default unless you disable Mirror Leg Pairs.",
+                width=46,
             )
 
     def execute(self, context):
@@ -197,7 +227,7 @@ class QWG_PT_panel(Panel):
 
         guide_box = layout.box()
         guide_box.label(text="Nito Guide", icon="EMPTY_AXIS")
-        guide_box.label(text="Place this skeleton for training labels.")
+        guide_box.label(text="Place this guide for training labels.")
 
         guide_row = guide_box.row()
         guide_row.enabled = has_mesh
@@ -207,7 +237,7 @@ class QWG_PT_panel(Panel):
         guide_build_row.enabled = has_guide
         guide_build_op = guide_build_row.operator(
             "qwg.create_armature_from_guides",
-            text="Generate Test Rig From Guide",
+            text="Preview Rig From Guide",
             icon="ARMATURE_DATA",
         )
         guide_build_op.symmetrize_legs = True
@@ -215,35 +245,30 @@ class QWG_PT_panel(Panel):
 
         guide_bind_row = guide_box.row()
         guide_bind_row.enabled = has_mesh and has_guide
-        guide_bind_row.operator("qwg.generate_bind_test_rig", text="Generate + Bind Test Rig", icon="MOD_ARMATURE")
+        guide_bind_row.operator("qwg.generate_bind_test_rig", text="Preview + Bind From Guide", icon="MOD_ARMATURE")
 
         if armature and armature.get("qwg_is_guide"):
             self._draw_guide_status(guide_box, context)
-            guide_box.label(text="Edit guide bones, then generate a test rig.")
+            guide_box.label(text="Guide is the label source of truth.")
+            guide_box.label(text="Preview only to validate placement.")
             return
 
         rig_box = layout.box()
-        rig_box.label(text="Nito Test Rig", icon="OUTLINER_OB_ARMATURE")
-        rig_box.label(text="Bind and pose this armature to check the label.")
-
-        starter_row = rig_box.row()
-        starter_row.operator("qwg.create_quadruped_armature", text="Create Starter Test Rig", icon="OUTLINER_OB_ARMATURE")
-
-        fit_row = rig_box.row()
-        fit_row.enabled = has_mesh
-        fit_row.operator("qwg.create_fitted_quadruped_armature", text="Draft Test Rig From Mesh", icon="MOD_ARMATURE")
+        rig_box.label(text="Nito Preview Rig", icon="OUTLINER_OB_ARMATURE")
+        rig_box.label(text="Temporary rig generated from a guide.")
 
         if not armature:
-            rig_box.label(text="Select a Nito guide or test rig.")
+            rig_box.label(text="Select a mesh to create a guide.")
+            rig_box.label(text="Select a guide to preview validation.")
             return
 
         row = rig_box.row(align=True)
-        row.operator("qwg.auto_map", text="Map Bones", icon="VIEWZOOM")
+        row.operator("qwg.auto_map", text="Remap Bones", icon="VIEWZOOM")
         row.operator("qwg.generate_walk_cycle", text="Pose Test Walk", icon="ARMATURE_DATA")
 
         bind_row = rig_box.row()
         bind_row.enabled = has_mesh
-        bind_row.operator("qwg.bind_selected_meshes", text="Bind Mesh To Test Rig", icon="MOD_ARMATURE")
+        bind_row.operator("qwg.bind_selected_meshes", text="Bind Mesh To Preview Rig", icon="MOD_ARMATURE")
 
         row = rig_box.row(align=True)
         row.operator("qwg.clear_cycle_keys", text="Clear Preview Keys", icon="TRASH")
@@ -349,25 +374,21 @@ class QWG_PT_panel(Panel):
             return
 
         layout.separator()
-        layout.label(text="Placement Guide", icon="INFO")
-        self._draw_wrapped_text(layout, help_data["role"])
-        self._draw_wrapped_text(layout, "Open the full notes for exact head/tail placement.")
-        help_op = layout.operator("qwg.show_guide_bone_help", text="Open Full Placement Notes", icon="HELP")
+        layout.label(text="Placement", icon="INFO")
+        layout.label(text=guide_short_help(bone_name))
+        layout.label(text="Head / tail in notes.")
+        help_op = layout.operator("qwg.show_guide_bone_help", text="Placement Notes", icon="HELP")
         help_op.bone_name = bone_name
 
         if is_leg_guide_bone(bone_name):
             layout.separator()
-            layout.label(text="Side-view note:")
-            self._draw_wrapped_text(
-                layout,
-                "Left and right legs often overlap. Nito mirrors leg pairs by default.",
-            )
+            layout.label(text="Side view mirrors pairs.")
 
     def _guide_help_data(self, bone_name):
         """Return placement help for a guide bone."""
         return guide_help_data(bone_name)
 
-    def _draw_wrapped_text(self, layout, text, width=25):
+    def _draw_wrapped_text(self, layout, text, width=16):
         """Draw readable wrapped helper text in Blender's narrow sidebar."""
         draw_wrapped_text(layout, text, width=width)
 

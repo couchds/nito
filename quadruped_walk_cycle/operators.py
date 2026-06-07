@@ -38,8 +38,8 @@ TAIL_BONE_NAMES = {"tail_01", "tail_02"}
 
 class QWG_OT_auto_map(Operator):
     bl_idname = "qwg.auto_map"
-    bl_label = "Map Test Rig Bones"
-    bl_description = "Fill Nito test-rig bone fields from the selected armature's bone names"
+    bl_label = "Map Preview Rig Bones"
+    bl_description = "Fill Nito preview-rig bone fields from the selected armature's bone names"
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
@@ -63,14 +63,14 @@ class QWG_OT_auto_map(Operator):
             setattr(settings, lower, find_best_bone(names, leg=leg, kind="lower", minimum=10))
             setattr(settings, foot, find_best_bone(names, leg=leg, kind="foot", minimum=10))
 
-        self.report({"INFO"}, "Bone mapping complete. Review fields before posing the test rig.")
+        self.report({"INFO"}, "Bone mapping complete. Review fields before posing the preview rig.")
         return {"FINISHED"}
 
 
 class QWG_OT_bind_selected_meshes(Operator):
     bl_idname = "qwg.bind_selected_meshes"
-    bl_label = "Bind Mesh To Test Rig"
-    bl_description = "Bind selected mesh objects to the active Nito test rig"
+    bl_label = "Bind Mesh To Preview Rig"
+    bl_description = "Bind selected mesh objects to the active Nito preview rig"
     bl_options = {"REGISTER", "UNDO"}
 
     weighting_mode: EnumProperty(
@@ -105,10 +105,10 @@ class QWG_OT_bind_selected_meshes(Operator):
         armature = active_armature(context)
         meshes = [obj for obj in context.selected_objects if obj.type == "MESH"]
         if not armature or not meshes:
-            self.report({"ERROR"}, "Select mesh object(s), then Shift-select the Nito test rig so it is active.")
+            self.report({"ERROR"}, "Select mesh object(s), then Shift-select the Nito preview rig so it is active.")
             return {"CANCELLED"}
         if armature.get("qwg_is_guide"):
-            self.report({"ERROR"}, "Bind to the generated Nito test rig, not the guide armature.")
+            self.report({"ERROR"}, "Bind to the generated Nito preview rig, not the guide armature.")
             return {"CANCELLED"}
 
         if context.object and context.object.mode != "OBJECT":
@@ -146,8 +146,8 @@ class QWG_OT_bind_selected_meshes(Operator):
 
 class QWG_OT_generate_bind_test_rig(Operator):
     bl_idname = "qwg.generate_bind_test_rig"
-    bl_label = "Generate + Bind Test Rig"
-    bl_description = "Generate a Nito test rig from the selected guide, bind selected meshes, and enter Pose Mode"
+    bl_label = "Preview + Bind From Guide"
+    bl_description = "Generate a Nito preview rig from the selected guide, bind selected meshes, and enter Pose Mode"
     bl_options = {"REGISTER", "UNDO"}
 
     weighting_mode: EnumProperty(
@@ -161,7 +161,7 @@ class QWG_OT_generate_bind_test_rig(Operator):
     )
     replace_existing_armatures: BoolProperty(
         name="Replace Armature Modifiers",
-        description="Remove existing Armature modifiers before binding to this test rig",
+        description="Remove existing Armature modifiers before binding to this preview rig",
         default=True,
     )
     max_influences: IntProperty(
@@ -180,7 +180,7 @@ class QWG_OT_generate_bind_test_rig(Operator):
         return has_guide and has_mesh
 
     def execute(self, context):
-        """Generate a poseable test rig from guides, bind meshes, and select the rig."""
+        """Generate a poseable preview rig from guides, bind meshes, and select the rig."""
         guide = next((obj for obj in context.selected_objects if obj.type == "ARMATURE" and obj.get("qwg_is_guide")), None)
         meshes = [obj for obj in context.selected_objects if obj.type == "MESH"]
         if not guide or not meshes:
@@ -202,12 +202,12 @@ class QWG_OT_generate_bind_test_rig(Operator):
             map_after_create=True,
         )
         if guide_result != {"FINISHED"}:
-            self.report({"ERROR"}, "Could not generate a Nito test rig from the guide.")
+            self.report({"ERROR"}, "Could not generate a Nito preview rig from the guide.")
             return {"CANCELLED"}
 
         armature = active_armature(context)
         if not armature or armature.get("qwg_is_guide"):
-            self.report({"ERROR"}, "Generated test rig was not selected.")
+            self.report({"ERROR"}, "Generated preview rig was not selected.")
             return {"CANCELLED"}
 
         if context.object and context.object.mode != "OBJECT":
@@ -232,7 +232,7 @@ class QWG_OT_generate_bind_test_rig(Operator):
         except RuntimeError:
             pass
 
-        self.report({"INFO"}, f"Generated and bound Nito test rig {armature.name}.")
+        self.report({"INFO"}, f"Generated and bound Nito preview rig {armature.name}.")
         return {"FINISHED"}
 
 
@@ -578,7 +578,7 @@ def bind_with_nearest_bone_weights(mesh, armature, max_influences):
 class QWG_OT_generate_walk_cycle(Operator):
     bl_idname = "qwg.generate_walk_cycle"
     bl_label = "Generate Pose Test Walk"
-    bl_description = "Generate a temporary looping walk preview on the selected Nito test rig"
+    bl_description = "Generate a temporary looping walk preview on the selected Nito preview rig"
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod

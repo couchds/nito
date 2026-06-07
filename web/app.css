@@ -1064,6 +1064,102 @@ textarea:focus {
   line-height: 1.45;
 }
 
+.placement-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.placement-summary div {
+  padding: 10px;
+  border: 1px solid rgba(58, 46, 31, 0.1);
+  border-radius: 6px;
+  background: rgba(255, 250, 240, 0.64);
+}
+
+.placement-summary strong,
+.placement-card h5 {
+  color: var(--ink);
+}
+
+.placement-guide {
+  display: grid;
+  gap: 14px;
+  padding-top: 2px;
+}
+
+.placement-guide-heading {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid rgba(27, 92, 83, 0.16);
+  border-radius: 6px;
+  background: rgba(232, 244, 238, 0.66);
+}
+
+.placement-guide-heading h5,
+.placement-help-section h6,
+.placement-card h5 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 780;
+}
+
+.placement-guide-heading p,
+.placement-card p {
+  margin: 0;
+}
+
+.placement-help-section {
+  display: grid;
+  gap: 8px;
+}
+
+.placement-help-section h6 {
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.placement-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 8px;
+}
+
+.placement-card {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid rgba(58, 46, 31, 0.1);
+  border-radius: 6px;
+  background:
+    linear-gradient(135deg, rgba(183, 138, 69, 0.07), transparent 58%),
+    rgba(255, 252, 244, 0.72);
+}
+
+.placement-card dl {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: 5px 8px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.42;
+}
+
+.placement-card dt {
+  color: #5f3f1a;
+  font-weight: 760;
+}
+
+.placement-card dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
 .run-list,
 .batch-list,
 .sample-list,
@@ -1959,6 +2055,7 @@ textarea:focus {
   .job-list,
   .create-grid,
   .field-grid,
+  .placement-summary,
   .skeleton-type-grid,
   .pipeline-dag {
     grid-template-columns: 1fr;

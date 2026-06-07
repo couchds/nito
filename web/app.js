@@ -54,6 +54,97 @@ const skeletonTypeOptions = [
   },
 ];
 
+const guidePlacementHelp = {
+  core: [
+    {
+      title: "Pelvis",
+      role: "Rear torso and hip block. This anchors the rear legs and defines where the spine leaves the rump.",
+      head: "Put the head near the rear center of body mass, just forward of the tail base and inside the body volume.",
+      tail: "Aim forward into the lumbar back where the rump transitions into the main spine.",
+      check: "Avoid tail hair, armor, saddles, and the outer silhouette. This is an internal hip landmark.",
+    },
+    {
+      title: "Spine",
+      role: "Middle torso segment. This bridges pelvis to rib cage and controls the main back line.",
+      head: "Start from the pelvis tail at the rear or mid back.",
+      tail: "End around the middle/front of the rib cage, still on the centerline and inside the body mass.",
+      check: "Ignore surface props and fur clumps. Keep the line smooth through the animal core.",
+    },
+    {
+      title: "Chest",
+      role: "Front torso and shoulder block. This anchors the front legs and the base of the neck.",
+      head: "Start near the front end of the spine.",
+      tail: "Place at the withers or upper chest/base-neck area, above and slightly behind the front-leg entry.",
+      check: "Think shoulder blade area for dogs/cats and withers for horses. Do not use tack or armor as the landmark.",
+    },
+    {
+      title: "Neck",
+      role: "Neck chain from chest to skull. This controls head carriage.",
+      head: "Start where the neck rises out of the shoulders.",
+      tail: "End near the poll or base of skull, behind the ears and before the muzzle begins.",
+      check: "Follow the center of neck volume, not mane, fur outline, reins, or armor.",
+    },
+    {
+      title: "Head",
+      role: "Head direction and skull length. This gives the rig a head bone that rotates naturally.",
+      head: "Start at the base of skull where the neck ends.",
+      tail: "Aim through the center/front of the skull or muzzle direction.",
+      check: "Use skull mass, not ears, horns, bridles, nose ornaments, or tiny muzzle details.",
+    },
+    {
+      title: "Tail",
+      role: "Bony tail direction. This describes the tail root and main tail line.",
+      head: "Start where the tail exits the pelvis/rump.",
+      tail: "Aim along the bony tail core. For fluffy tails, ignore the outer fur edge.",
+      check: "If there is no clear tail, keep the guide short near the rump instead of inventing length.",
+    },
+  ],
+  limbs: [
+    {
+      title: "Front upper limb",
+      role: "Shoulder to elbow, even when the shoulder is partly hidden inside the torso.",
+      head: "Place inside the chest where the front leg enters the body.",
+      tail: "Place at the elbow, usually the first major bend below and behind the chest.",
+      check: "Do not start on surface shoulder fur, armor straps, or the outside contour.",
+    },
+    {
+      title: "Front lower limb",
+      role: "Elbow to wrist/carpus, the long lower front-leg segment.",
+      head: "Start at the elbow.",
+      tail: "End at the wrist/carpus bend just above the paw or hoof.",
+      check: "Do not put the tail at the ground contact. The foot guide handles contact.",
+    },
+    {
+      title: "Front foot / paw / hoof",
+      role: "Ground-contact direction from wrist/carpus to toe, pad, or hoof.",
+      head: "Start where the lower front limb ends.",
+      tail: "End at the front/center of the toe, paw pad, or hoof contact point.",
+      check: "Use the point the animation should treat as the planted contact.",
+    },
+    {
+      title: "Rear upper limb",
+      role: "Hip to stifle/knee through the thigh.",
+      head: "Place at the hip socket area inside the rump, forward/down from the tail base.",
+      tail: "Place at the stifle/knee, the forward-facing bend under the flank.",
+      check: "This is often hidden by body mass. Do not mistake the hock for the knee.",
+    },
+    {
+      title: "Rear lower limb",
+      role: "Stifle/knee to hock/ankle.",
+      head: "Start at the rear knee/stifle.",
+      tail: "End at the hock, the backward-pointing ankle bend above the rear foot.",
+      check: "This usually angles backward/down before the foot reaches the ground.",
+    },
+    {
+      title: "Rear foot / paw / hoof",
+      role: "Ground-contact direction from hock/ankle to toe, pad, or hoof.",
+      head: "Start at the hock/ankle.",
+      tail: "End at the front/center of the rear toe, paw pad, or hoof contact point.",
+      check: "Use the animation contact point, not the back of the heel/hock.",
+    },
+  ],
+};
+
 const elements = {
   statusLine: document.querySelector("#statusLine"),
   refreshButton: document.querySelector("#refreshButton"),
@@ -247,7 +338,63 @@ function skeletonSchemaCard(schema, options = {}) {
           ? `<ul class="skeleton-notes">${notes.map((note) => `<li>${escapeHtml(note)}</li>`).join("")}</ul>`
           : ""
       }
+      ${options.compact ? skeletonPlacementSummary() : skeletonPlacementGuide()}
     </div>
+  `;
+}
+
+function skeletonPlacementSummary() {
+  return `
+    <div class="placement-summary">
+      <div>
+        <strong>Body landmarks</strong>
+        <p>Place pelvis, spine, chest, neck, head, and tail inside the body volume, not on fur, tack, or armor.</p>
+      </div>
+      <div>
+        <strong>Limb landmarks</strong>
+        <p>Use joint centers for upper/lower limb bones and real toe, paw, or hoof contact points for feet.</p>
+      </div>
+    </div>
+  `;
+}
+
+function placementHelpCard(item) {
+  return `
+    <article class="placement-card">
+      <h5>${escapeHtml(item.title)}</h5>
+      <p>${escapeHtml(item.role)}</p>
+      <dl>
+        <dt>Head</dt>
+        <dd>${escapeHtml(item.head)}</dd>
+        <dt>Tail</dt>
+        <dd>${escapeHtml(item.tail)}</dd>
+        <dt>Check</dt>
+        <dd>${escapeHtml(item.check)}</dd>
+      </dl>
+    </article>
+  `;
+}
+
+function skeletonPlacementGuide() {
+  return `
+    <section class="placement-guide">
+      <div class="placement-guide-heading">
+        <h5>Guide Placement Help</h5>
+        <p>Use these notes while correcting the Nito guide in Blender. The white/orange bone head is the start of the guide bone; the tail is the end point.</p>
+      </div>
+      <div class="placement-help-section">
+        <h6>Body guide bones</h6>
+        <div class="placement-grid">
+          ${guidePlacementHelp.core.map(placementHelpCard).join("")}
+        </div>
+      </div>
+      <div class="placement-help-section">
+        <h6>Limb guide bones</h6>
+        <div class="placement-grid">
+          ${guidePlacementHelp.limbs.map(placementHelpCard).join("")}
+        </div>
+      </div>
+    </section>
   `;
 }
 

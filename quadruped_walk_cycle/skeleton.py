@@ -1735,14 +1735,14 @@ def enter_pose_mode(context, armature):
 
 class QWG_OT_create_quadruped_armature(Operator):
     bl_idname = "qwg.create_quadruped_armature"
-    bl_label = "Create Starter Test Rig"
-    bl_description = "Create a starter Nito quadruped test rig"
+    bl_label = "Dev: Create Starter Preview Rig"
+    bl_description = "Create a starter Nito quadruped preview rig"
     bl_options = {"REGISTER", "UNDO"}
 
     armature_name: StringProperty(
         name="Name",
         description="Name for the generated armature object and data",
-        default="Nito_Quadruped_Test_Rig",
+        default="Nito_Quadruped_Preview_Rig",
     )
     scale: FloatProperty(
         name="Scale",
@@ -1779,7 +1779,7 @@ class QWG_OT_create_quadruped_armature(Operator):
         default=True,
     )
     def execute(self, context):
-        """Create the standard test rig and optionally map it for Nito."""
+        """Create the standard preview rig and optionally map it for Nito."""
         armature = create_standard_quadruped(
             context,
             self.armature_name,
@@ -1792,14 +1792,14 @@ class QWG_OT_create_quadruped_armature(Operator):
         if self.map_after_create:
             apply_standard_mapping(context.scene.qwg_settings)
 
-        self.report({"INFO"}, f"Created Nito test rig {armature.name}.")
+        self.report({"INFO"}, f"Created Nito preview rig {armature.name}.")
         return {"FINISHED"}
 
 
 class QWG_OT_create_fitted_quadruped_armature(Operator):
     bl_idname = "qwg.create_fitted_quadruped_armature"
-    bl_label = "Create Draft Test Rig From Mesh"
-    bl_description = "Create a draft Nito test rig scaled and placed to the selected mesh bounds"
+    bl_label = "Dev: Draft Preview Rig From Mesh"
+    bl_description = "Create a draft Nito preview rig scaled and placed to the selected mesh bounds"
     bl_options = {"REGISTER", "UNDO"}
 
     armature_name: StringProperty(
@@ -1894,7 +1894,7 @@ class QWG_OT_create_fitted_quadruped_armature(Operator):
             top_percentile=self.top_percentile,
         )
 
-        armature_name = self.armature_name.strip() or f"{mesh_object.name}_Nito_Test_Rig"
+        armature_name = self.armature_name.strip() or f"{mesh_object.name}_Nito_Preview_Rig"
         armature = create_standard_quadruped(
             context,
             armature_name,
@@ -1921,7 +1921,7 @@ class QWG_OT_create_fitted_quadruped_armature(Operator):
         enter_pose_mode(context, armature)
 
         axis_note = f" using {resolved_forward_axis}" if self.mesh_forward_axis == "AUTO" else ""
-        self.report({"INFO"}, f"Created draft Nito {profile['label']} test rig for {mesh_object.name}{axis_note}.")
+        self.report({"INFO"}, f"Created draft Nito {profile['label']} preview rig for {mesh_object.name}{axis_note}.")
         return {"FINISHED"}
 
 
@@ -2021,8 +2021,8 @@ class QWG_OT_create_fit_guides(Operator):
 
 class QWG_OT_create_armature_from_guides(Operator):
     bl_idname = "qwg.create_armature_from_guides"
-    bl_label = "Generate Test Rig From Guide"
-    bl_description = "Generate a Nito test rig from the selected editable guide armature"
+    bl_label = "Preview Rig From Guide"
+    bl_description = "Generate a Nito preview rig from the selected editable guide armature"
     bl_options = {"REGISTER", "UNDO"}
 
     armature_name: StringProperty(
@@ -2053,12 +2053,12 @@ class QWG_OT_create_armature_from_guides(Operator):
     )
     hide_guides_after_create: BoolProperty(
         name="Hide Guides",
-        description="Hide the guide armature after generating the test rig",
+        description="Hide the guide armature after generating the preview rig",
         default=True,
     )
     replace_existing_generated: BoolProperty(
-        name="Replace Previous Rig",
-        description="Delete older Nito test rigs generated from the same guide",
+        name="Replace Previous Preview",
+        description="Delete older Nito preview rigs generated from the same guide",
         default=True,
         options={"SKIP_SAVE"},
     )
@@ -2075,7 +2075,7 @@ class QWG_OT_create_armature_from_guides(Operator):
         return active_guide_armature(context) is not None
 
     def execute(self, context):
-        """Create the Nito test rig from edited guide bones."""
+        """Create the Nito preview rig from edited guide bones."""
         guide = active_guide_armature(context)
         if not guide:
             self.report({"ERROR"}, "Select a Nito guide armature.")
@@ -2096,7 +2096,7 @@ class QWG_OT_create_armature_from_guides(Operator):
             if guide_base.endswith(suffix):
                 guide_base = guide_base[: -len(suffix)]
                 break
-        armature_name = self.armature_name.strip() or f"{guide_base}_Nito_Test_Rig"
+        armature_name = self.armature_name.strip() or f"{guide_base}_Nito_Preview_Rig"
         removed_count = 0
         if self.replace_existing_generated:
             removed_count = remove_previous_generated_rigs(guide, armature_name)
@@ -2135,6 +2135,6 @@ class QWG_OT_create_armature_from_guides(Operator):
         enter_pose_mode(context, armature)
 
         mode_label = f"mirrored leg pairs (fixed {mirror_error:.4f}m)" if self.symmetrize_legs else "asymmetric leg guides"
-        replace_label = f" Replaced {removed_count} previous rig(s)." if removed_count else ""
-        self.report({"INFO"}, f"Generated Nito test rig from {guide.name} with {mode_label}.{replace_label}")
+        replace_label = f" Replaced {removed_count} previous preview rig(s)." if removed_count else ""
+        self.report({"INFO"}, f"Generated Nito preview rig from {guide.name} with {mode_label}.{replace_label}")
         return {"FINISHED"}

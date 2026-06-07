@@ -4,7 +4,7 @@ bl_info = {
     "version": (0, 6, 0),
     "blender": (3, 6, 0),
     "location": "View3D > Sidebar > Nito",
-    "description": "Create Nito guide labels, generate test rigs, bind meshes, and preview quadruped motion.",
+    "description": "Create Nito guide labels, preview rigs, bind meshes, and preview quadruped motion.",
     "category": "Animation",
 }
 

@@ -2,7 +2,7 @@
 
 Nito is a local training-asset pipeline for quadruped characters. It helps create prompt-backed samples, generate multi-view reference art, turn those views into Tripo3D models, prepare the models for Blender skeleton placement, and collect verified labels for training a guide initializer that can place skeleton landmarks on new meshes.
 
-The repo includes the Nito Blender Tools add-on for manual guide placement and rig checks. The Nito guide is the training label skeleton you edit by hand; the generated Nito test rig is a normal Blender armature you can bind to the mesh, inspect in Pose Mode, and use for temporary walk previews.
+The repo includes the Nito Blender Tools add-on for manual guide placement and rig checks. The Nito guide is the training label skeleton you edit by hand; the generated Nito preview rig is a temporary normal Blender armature created from that guide so you can bind the mesh, inspect Pose Mode, and run walk previews without changing the label source of truth.
 
 ## Nito Workflow
 
@@ -15,7 +15,7 @@ The repo includes the Nito Blender Tools add-on for manual guide placement and r
 
 ## Blender Add-on
 
-Use this section when you want to install the bundled Blender add-on directly, place a training guide, or test a generated quadruped rig.
+Use this section when you want to install the bundled Blender add-on directly, place a training guide, or preview how a generated quadruped rig would behave.
 
 ## Install
 
@@ -29,16 +29,17 @@ Use this section when you want to install the bundled Blender add-on directly, p
 
 1. Select the animal mesh and click **Create Nito Guide**.
 2. Edit the guide bones until the skeleton landmarks match the mesh.
-3. Click **Generate + Bind Test Rig** to create a normal Blender armature, bind the selected mesh, and enter Pose Mode.
-4. Use **Map Bones** when using your own rig. Generated Nito test rigs map themselves automatically.
-5. Review the mapped fields. Auto mapping is best-effort because rigs use wildly different naming conventions.
-6. Choose a gait: Compact Walk, Walk, Trot, Pace, or Bound.
-7. Choose generation mode:
+3. Export the verified label when the guide is correct.
+4. Optional: click **Preview + Bind From Guide** to create a temporary normal Blender armature, bind the selected mesh, and enter Pose Mode.
+5. Use **Remap Bones** when using your own rig. Generated Nito preview rigs map themselves automatically.
+6. Review the mapped fields. Auto mapping is best-effort because rigs use wildly different naming conventions.
+7. Choose a gait: Compact Walk, Walk, Trot, Pace, or Bound.
+8. Choose generation mode:
    - **Auto**: uses IK target bones where mapped, otherwise FK chains.
    - **IK Targets**: animates mapped foot or paw controls by location.
    - **FK Chains**: animates mapped upper, lower, and foot bones by Euler rotation.
-8. Set stride, lift, frame range, and axes.
-9. Click **Pose Test Walk**.
+9. Set stride, lift, frame range, and axes.
+10. Click **Pose Test Walk**.
 
 The add-on adds cyclic F-curve modifiers by default so the generated cycle loops past the selected frame range.
 
@@ -65,11 +66,11 @@ The generator assumes one local axis is forward, one is side-to-side, and one is
 
 If the motion goes sideways, backwards, or downward, change the axis settings before regenerating.
 
-## Generated Test Rig
+## Generated Preview Rig
 
-Click **Create Starter Test Rig** to generate a simple +Y-forward, Z-up quadruped rig. The default display is **Stick**, which reads more like a rig than a blocky proxy animal. The operator has a **Profile** option; `Medium Quadruped` is the default, `Stocky Quadruped` is better for compact goat/sheep/ram-like bodies, and `Horse` provides a longer body, neck, and limb template.
+The preview rig is generated from an edited Nito guide. It is not a second annotation skeleton and should not require different landmark placement. If the preview rig bends badly, either the guide landmarks need correction or the guide-to-rig conversion needs improvement.
 
-The generated rig includes:
+The generated preview rig includes:
 
 - `root`, `body`, `pelvis`, `chest`, `neck`, `head`, and tail bones
 - Four named FK leg chains such as `front_left_upper`, `front_left_lower`, and `front_left_foot`
@@ -81,11 +82,11 @@ Hidden non-deforming shoulder/hip helper bones keep the limb chains parented cle
 IK and pole controls are created with their bone heads on the actual target points so Blender's IK solver does not pull the neutral pose away from the fitted skeleton. Generated foot controls are aligned to the rig's local axes, and walk-cycle location offsets are converted from armature space into each control bone's local channels before keying.
 Generated IK constraints set a neutral pole angle so Pose Mode matches the fitted rest chain instead of twisting the leg as soon as constraints are added.
 
-The generated armature is meant as a clean animation test rig and naming template, not a production-ready anatomy rig. Use Blender's operator redo panel after creation if you want a different profile or Octahedral, B-Bone, or Wire display instead.
+The generated armature is meant as a clean animation preview and naming template, not a production-ready anatomy rig. Use Blender's operator redo panel after creation if you want a different profile or Octahedral, B-Bone, or Wire display instead.
 
 New generated rigs open in Pose Mode with the main animation controls selected. The control widgets are stored as hidden mesh objects in a `*_widgets` collection and assigned as custom bone shapes.
 
-Fitted Nito test rigs bake their mesh-alignment transform into the armature rest bones at creation time. The armature object stays at identity, so Object Mode, Pose Mode, and Edit Mode use the same visible skeleton placement.
+Generated Nito preview rigs bake their mesh-alignment transform into the armature rest bones at creation time. The armature object stays at identity, so Object Mode, Pose Mode, and Edit Mode use the same visible skeleton placement.
 
 ## Nito Guides
 
@@ -93,23 +94,24 @@ Select a mesh and click **Create Nito Guide** to create an editable Nito guide a
 
 1. Create a Nito guide from the mesh.
 2. Edit the guide bones in Blender Edit Mode until the skeleton landmarks sit where you want them.
-3. Click **Generate Test Rig From Guide** to create the Nito test rig.
-4. Select the mesh, Shift-select the Nito test rig so the rig is active, then click **Bind Mesh To Test Rig**.
-5. Use **Pose Test Walk** or Blender Pose Mode to check whether the rig bends the way you expect.
+3. Export the verified label from Nito when the guide placement is correct.
+4. Optional: click **Preview Rig From Guide** to create a temporary Nito preview rig from the exact guide placement.
+5. Optional: select the mesh and guide, then click **Preview + Bind From Guide** to bind the mesh and enter Pose Mode.
+6. Use **Pose Test Walk** or Blender Pose Mode to check whether the preview rig bends the way you expect.
 
-The **Generate + Bind Test Rig** button combines steps 3 and 4 when a Nito guide and mesh are both selected.
+The **Preview + Bind From Guide** button combines preview-rig creation and mesh binding when a Nito guide and mesh are both selected.
 
-The guide initializer still estimates the ground, main torso span, upper back surface, foot contact areas, and broad body type. Those guesses are only a starting point. The final generated armature comes from the edited guide bones, which is more reliable than trying to infer hidden shoulder, hip, knee, and ankle positions from a surface mesh alone.
+The guide initializer still estimates the ground, main torso span, upper back surface, foot contact areas, and broad body type. Those guesses are only a starting point. The final training label comes from the edited guide bones, which is more reliable than trying to infer hidden shoulder, hip, knee, and ankle positions from a surface mesh alone.
 
-By default, **Generate Test Rig From Guide** mirrors each left/right leg pair from one side-profile while preserving the edited guide joint positions. When guides were created by this version, Nito detects which overlaid side changed from the generated starting point; for older guides it uses the active left/right guide bone as a hint. This avoids crossed duplicate leg chains when fitting from side view. Disable **Mirror Leg Pairs** in the operator redo panel only when you intentionally want asymmetric left/right limb placement.
+By default, **Preview Rig From Guide** mirrors each left/right leg pair from one side-profile while preserving the edited guide joint positions. When guides were created by this version, Nito detects which overlaid side changed from the generated starting point; for older guides it uses the active left/right guide bone as a hint. This avoids crossed duplicate leg chains when fitting from side view. Disable **Mirror Leg Pairs** in the operator redo panel only when you intentionally want asymmetric left/right limb placement.
 
-The sidebar button always runs with mirrored leg pairs and replacement enabled. In mirrored mode, guide landmarks define the body span, shoulder/hip placement, hoof contact, and visible joint bends. Nito only adds a small fallback bend when a guide chain is nearly straight. After the rig is generated, Nito also enforces matching side-profile coordinates on both front and rear leg pairs. The guide generator replaces older rigs generated from the same guide by default, which prevents stale `*_Rig.001` armatures from overlapping the newest rig and making the leg chains look unsymmetrical.
+The sidebar button always runs with mirrored leg pairs and replacement enabled. In mirrored mode, guide landmarks define the body span, shoulder/hip placement, hoof contact, and visible joint bends. Nito only adds a small fallback bend when a guide chain is nearly straight. After the preview rig is generated, Nito also enforces matching side-profile coordinates on both front and rear leg pairs. The preview generator replaces older rigs generated from the same guide by default, which prevents stale `*_Rig.001` armatures from overlapping the newest rig and making the leg chains look unsymmetrical.
 
-The guide armature is hidden by default after **Generate Test Rig From Guide** so the viewport shows the test rig cleanly. Unhide the guide object in the Outliner if you want to edit and regenerate.
+The guide armature is hidden by default after **Preview Rig From Guide** so the viewport shows the preview rig cleanly. Unhide the guide object in the Outliner if you want to edit and regenerate.
 
-When a guide armature is selected, the Nito panel shows the active guide bone label, such as `Head`, `Neck`, or `Front Left Foot / Paw / Hoof`, so you can tell which landmark you are placing. It also shows short placement guidance in the sidebar and an **Open Full Placement Notes** dialog with head/tail instructions, anatomical landmarks, common mistakes, and the side-view mirroring note for leg bones.
+When a guide armature is selected, the Nito panel shows the active guide bone label, such as `Head`, `Neck`, or `Front Left Foot / Paw / Hoof`, so you can tell which landmark you are placing. It also shows short placement guidance in the sidebar and a **Placement Notes** dialog with head/tail instructions, anatomical landmarks, common mistakes, and the side-view mirroring note for leg bones.
 
-The **Draft Test Rig From Mesh** button still creates a direct one-shot fitted armature, but it is best treated as a quick draft rather than the main workflow.
+The old starter/draft preview-rig operators are kept for development and debugging, but they are no longer part of the main sidebar workflow.
 
 Binding defaults to Nito's nearest-bone weights, which creates real vertex groups and an Armature modifier without relying on Blender's heat weighting. The Nito binder biases torso, head, and belly vertices away from accidental leg influence, keeps central underbody vertices on the body instead of a left or right leg, limits each vertex to a plausible leg column before blending, then prunes weak leftover weights that can make horns, mouths, loose belly fur, or the wrong leg follow the moving feet. Use the operator redo panel if you want to try Blender Automatic instead. For production results, expect to clean up vertex weights around shoulders, hips, hooves, horns, and dense fur.
 
@@ -217,7 +219,7 @@ Start Nito when you want a dashboard over the same batch runner:
 
 Then open `http://127.0.0.1:8765`. The Home page shows actively running UI jobs and samples that have not reached the verified training-export state yet. Nito uses route-backed pages for `/samples`, `/samples/<sample_id>`, `/batches`, `/batches/<run_id>`, `/create`, `/jobs`, and `/settings`, so detail pages can be opened directly.
 
-Use the Create page to make a prompt-backed sample with a two-step flow: enter the character prompt, then choose the skeleton/body type from the visual cards. Creating a sample immediately starts the automatic machine pipeline: sequential OpenAI reference views, Tripo generation, model download, and Blender label-file prep. Nito then pauses for the only manual step: opening the prepared Blender file and placing/correcting the skeleton guide. The original prompt and generated front/left/right/back OpenAI prompts are stored in the sample workflow state. Each sample detail page shows the expected rig family, bone chains, pipeline state, reference images, Blender review renders, and downloaded GLB/GLTF model when those artifacts exist. After a verified label is exported, the 3D viewport adds a **Skeleton** toggle and loads the exported canonical OBJ label mesh so the overlay matches the Blender label-work coordinate frame. Batches remain candidate training sets, and a sample can appear in multiple batches because membership is computed from saved batch summaries.
+Use the Create page to make a prompt-backed sample with a two-step flow: enter the character prompt, then choose the skeleton/body type from the visual cards. Creating a sample immediately starts the automatic machine pipeline: sequential OpenAI reference views, Tripo generation, model download, and Blender label-file prep. Nito then pauses for the only manual step: opening the prepared Blender file and placing/correcting the skeleton guide. The original prompt and generated front/left/right/back OpenAI prompts are stored in the sample workflow state. Each sample detail page shows the expected rig family, bone chains, placement guidance for the guide bones, pipeline state, reference images, Blender review renders, and downloaded GLB/GLTF model when those artifacts exist. After a verified label is exported, the 3D viewport adds a **Skeleton** toggle and loads the exported canonical OBJ label mesh so the overlay matches the Blender label-work coordinate frame. Batches remain candidate training sets, and a sample can appear in multiple batches because membership is computed from saved batch summaries.
 
 Tripo submission uses the saved OpenAI reference images directly. `submit-tripo` uploads the local `front`, `left`, `right`, and `back` files, sends them to Tripo in the required `front`, `left`, `back`, `right` order, and stores the returned model task id in the sample workflow state.
 
