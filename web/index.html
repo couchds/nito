@@ -185,6 +185,53 @@
           <div class="section-heading">
             <h2>Jobs</h2>
           </div>
+          <form id="trainForm" class="content-band settings-form">
+            <section class="panel-section">
+              <h2>Train From Labeled Batch</h2>
+              <label>
+                Labeled batch
+                <select id="trainBatchSelect" name="batchId">
+                  <option value="">All verified labels</option>
+                </select>
+              </label>
+              <p class="field-help">Choose the batch of manually verified samples to use as the real training input.</p>
+              <details class="advanced-training">
+                <summary>Advanced training settings</summary>
+              <div class="form-grid">
+                <label>
+                  Epochs
+                  <input name="epochs" type="number" min="1" value="40">
+                </label>
+                <label>
+                  Batch size
+                  <input name="batchSize" type="number" min="1" value="32">
+                </label>
+                <label>
+                  Points per mesh
+                  <input name="numPoints" type="number" min="32" value="1024">
+                </label>
+                <label>
+                  Device
+                  <select name="device">
+                    <option value="auto">Auto</option>
+                    <option value="cpu">CPU</option>
+                    <option value="cuda">CUDA</option>
+                  </select>
+                </label>
+                <label>
+                  Seed
+                  <input name="seed" type="number" min="0" value="20260531">
+                </label>
+              </div>
+              <label>
+                Output folder
+                <input name="outDir" type="text" value="models/qwalk_guide_initializer">
+              </label>
+              </details>
+              <p class="field-help">Nito trains only on verified labels from the selected batch.</p>
+              <button id="trainButton" class="primary-action" type="submit">Start Batch Training</button>
+            </section>
+          </form>
           <div id="jobList" class="job-list"></div>
           <pre id="jobLog" class="job-log">Select a job to view output.</pre>
         </section>

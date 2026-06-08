@@ -67,6 +67,14 @@ def parse_args() -> argparse.Namespace:
 
 def resolve_object(name: str, expected_type: str) -> bpy.types.Object:
     obj = bpy.data.objects.get(name)
+    if obj and obj.type == expected_type:
+        return obj
+    if expected_type == "ARMATURE":
+        guides = [candidate for candidate in bpy.data.objects if candidate.type == "ARMATURE" and candidate.get("qwg_is_guide")]
+        if len(guides) == 1:
+            guide = guides[0]
+            print(f"Guide object not found by stored name {name!r}; using marked guide {guide.name!r}.")
+            return guide
     if not obj or obj.type != expected_type:
         raise ValueError(f"{expected_type} object not found: {name}")
     return obj

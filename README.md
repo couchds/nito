@@ -115,50 +115,23 @@ The old starter/draft preview-rig operators are kept for development and debuggi
 
 Binding defaults to Nito's nearest-bone weights, which creates real vertex groups and an Armature modifier without relying on Blender's heat weighting. The Nito binder biases torso, head, and belly vertices away from accidental leg influence, keeps central underbody vertices on the body instead of a left or right leg, limits each vertex to a plausible leg column before blending, then prunes weak leftover weights that can make horns, mouths, loose belly fur, or the wrong leg follow the moving feet. Use the operator redo panel if you want to try Blender Automatic instead. For production results, expect to clean up vertex weights around shoulders, hips, hooves, horns, and dense fur.
 
-## Synthetic ML Dataset
+## Manual Training Labels Only
 
-The `scripts/generate_synthetic_quadrupeds.py` script creates rough synthetic quadruped OBJ meshes with exact Nito guide labels. This is intended as seed data for an ML guide initializer, not as finished animal artwork.
+Nito does not use synthetic samples for training. Training data comes from manually reviewed samples that have been corrected in Blender, exported as verified labels, and added to a batch in the web UI.
 
-Generate a 1,000-sample starter dataset:
+The intended training flow is:
 
-```powershell
-python scripts/generate_synthetic_quadrupeds.py --count 1000 --out data/synthetic_quadrupeds
-```
+1. Create a prompt-backed sample in the Nito web UI.
+2. Open the prepared Blender label file from the sample page.
+3. Manually place or correct the Nito guide.
+4. Save the Blender file.
+5. Export the sample with **Export Verified Label**.
+6. Add the verified sample to a batch.
+7. Train from that labeled batch on the Jobs page.
 
-Each sample writes:
+Verified labels are treated as ground truth. Use `scripts/export_qwalk_guide_label.py --verified` only after the guide placement has been visually reviewed and corrected in Blender. Candidate labels can still be exported for inspection, but they should not be used for model training.
 
-- an `.obj` proxy mesh
-- a `.json` label file with Nito guide bone head/tail coordinates
-- `animal_type`, `morphology_type`, and mesh-space forward/left/up axes
-- a root `manifest.jsonl` and `dataset_info.json`
-
-Current synthetic animal types are horse, dog, cat, giraffe, turtle, lizard, and ram. The generated `data/synthetic_quadrupeds/` directory is ignored by Git so the repo keeps the generator without storing bulky training assets.
-
-By default generated samples are +Y-forward and Z-up. This is the preferred training setup because the predictor can rotate real meshes into the same canonical orientation before inference. To deliberately stress-test arbitrary yaw, opt in with `--random-yaw`:
-
-```powershell
-python scripts/generate_synthetic_quadrupeds.py --count 20 --out data/synthetic_quadrupeds --random-yaw
-```
-
-OBJ files are mesh-only and do not contain Blender armatures. To inspect a sample with its labeled Nito guide bones, run the Blender helper against the matching `.json` label file:
-
-```powershell
-blender --python scripts/import_synthetic_quadruped_sample.py -- data/synthetic_quadrupeds/train/syn_000000.json
-```
-
-The helper imports the OBJ mesh with `Forward=Y` and `Up=Z`, creates an editable Nito guide armature from the JSON label coordinates, selects both objects, and stores the synthetic `animal_type` and `morphology_type` on the guide object. If you import raw OBJ files manually, use the same `Forward=Y` and `Up=Z` axis settings.
-
-Train a first PointNet-style guide initializer from the synthetic dataset:
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install torch numpy
-.\.venv\Scripts\python.exe scripts/train_guide_initializer.py --data data/synthetic_quadrupeds --epochs 40
-```
-
-The trainer samples point clouds from the OBJ meshes, predicts the 23 guide points needed to reconstruct the Nito guide bones, and uses `animal_type` plus `morphology_type` as auxiliary classification tasks. Training artifacts are written under `models/qwalk_guide_initializer/`, including `qwalk_guide_initializer.pt`, `metrics.json`, and a small `test_predictions_preview.jsonl`.
-
-Real labels are treated as ground truth and are only loaded from `--real-data` when their JSON has `verified_label: true`. Use `scripts/export_qwalk_guide_label.py --verified` only after the guide placement has been visually reviewed and corrected in Blender. Candidate labels can still be tested with `--allow-unverified-real`, but they should not be used for model training.
+The trainer samples point clouds from verified exported OBJ meshes, predicts the 23 guide points needed to reconstruct the Nito guide bones, and uses `animal_type` plus `morphology_type` as auxiliary classification tasks. Training artifacts are written under `models/qwalk_guide_initializer/`, including `qwalk_guide_initializer.pt`, `metrics.json`, and a small `test_predictions_preview.jsonl`.
 
 For repeatable real-label creation, use the repo-local Codex skill at `skills/qwalk-gold-labeler/SKILL.md`. It defines the gold-label loop: create a candidate guide, render side/front/rear/top/quarter review images with `scripts/render_qwalk_label_review.py`, apply exact coordinate corrections with `scripts/apply_qwalk_guide_edits.py`, repeat until every view passes, then export with `--verified`.
 
@@ -237,27 +210,34 @@ After the review images pass the gold-label skill checklist, export the correcte
 
 Omit `--verified` to export a candidate label that remains blocked from training.
 
-Predict guide bones for an OBJ mesh:
+Train from a verified batch in the web UI by opening `/jobs`, choosing the labeled batch, and clicking **Start Batch Training**. The equivalent PowerShell command is:
 
 ```powershell
-.\.venv\Scripts\python.exe scripts/predict_guide_initializer.py data/synthetic_quadrupeds/train/syn_000007.obj --checkpoint models/qwalk_guide_initializer/qwalk_guide_initializer.pt --mesh-forward-axis AUTO
+.\.venv\Scripts\python.exe scripts\train_guide_initializer.py `
+  --real-data data\training_batches\manual_training_set `
+  --real-only `
+  --epochs 40
+```
+
+Predict guide bones for a verified exported OBJ mesh:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\predict_guide_initializer.py `
+  data\real_quadrupeds\train\nito_1780941153_ec7dd1.obj `
+  --checkpoint models\qwalk_guide_initializer\qwalk_guide_initializer.pt `
+  --mesh-forward-axis AUTO
 ```
 
 This writes a sibling `*.qwalk_prediction.json` file with predicted guide points, reconstructed Nito guide bones, animal probabilities, and morphology probabilities. The predictor rotates the mesh into +Y-forward canonical space before inference, then rotates predictions back. `AUTO` uses the dominant horizontal extent; pass `POS_X`, `NEG_X`, `POS_Y`, or `NEG_Y` when you know the true tail-to-head axis. The predictor also applies a small postprocess pass by default to mirror leg pairs, keep centerline bones centered, ground the feet, and keep limb joints above the ground plane.
 
-Evaluate a saved checkpoint:
+Evaluate a saved checkpoint against a manually labeled dataset:
 
 ```powershell
-.\.venv\Scripts\python.exe scripts/evaluate_guide_initializer.py --data data/synthetic_quadrupeds --checkpoint models/qwalk_guide_initializer/qwalk_guide_initializer.pt --split test
+.\.venv\Scripts\python.exe scripts\evaluate_guide_initializer.py `
+  --data data\training_batches\manual_training_set `
+  --checkpoint models\qwalk_guide_initializer\qwalk_guide_initializer.pt `
+  --split train
 ```
-
-Import the prediction into Blender as an editable guide armature:
-
-```powershell
-& "C:\Program Files (x86)\Steam\steamapps\common\Blender\blender.exe" --python scripts/import_synthetic_quadruped_sample.py -- data/synthetic_quadrupeds/train/syn_000007.qwalk_prediction.json
-```
-
-If Blender is on your `PATH`, `blender --python ...` works too. The same import helper accepts both synthetic label JSON files and prediction JSON files.
 
 ## Notes
 

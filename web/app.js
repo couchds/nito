@@ -154,6 +154,9 @@ const elements = {
   createSampleButton: document.querySelector("#createSampleButton"),
   runForm: document.querySelector("#runForm"),
   runButton: document.querySelector("#runButton"),
+  trainForm: document.querySelector("#trainForm"),
+  trainButton: document.querySelector("#trainButton"),
+  trainBatchSelect: document.querySelector("#trainBatchSelect"),
   promptInput: document.querySelector("#promptInput"),
   promptNextButton: document.querySelector("#promptNextButton"),
   schemaBackButton: document.querySelector("#schemaBackButton"),
@@ -623,6 +626,7 @@ function jobActionLabel(value) {
     "prepare-label-work": "Blender prep",
     "export-verified": "Verified label export",
     "run-pipeline": "Automatic pipeline",
+    "train-guide-initializer": "Guide initializer training",
   };
   return labels[value] || labelText(value || "job");
 }
@@ -696,8 +700,23 @@ function render() {
   renderSamples();
   renderSampleDetail();
   renderJobs();
+  renderTrainingControls();
   renderSettings();
   applyRoute(route);
+}
+
+function renderTrainingControls() {
+  if (!elements.trainBatchSelect) return;
+  const current = elements.trainBatchSelect.value;
+  elements.trainBatchSelect.innerHTML = `
+    <option value="">All verified labels</option>
+    ${state.batches
+      .map((batch) => `<option value="${escapeHtml(batch.run_id)}">${escapeHtml(batch.run_id)} (${batch.count || 0})</option>`)
+      .join("")}
+  `;
+  if (state.batches.some((batch) => batch.run_id === current)) {
+    elements.trainBatchSelect.value = current;
+  }
 }
 
 function renderHome() {
@@ -1095,6 +1114,40 @@ function sampleActionPanel(sample) {
   `;
 }
 
+function sampleBatchPanel(sample) {
+  const currentBatches = sample.batches || [];
+  const availableBatches = state.batches.filter((batch) => !currentBatches.includes(batch.run_id));
+  return `
+    <section class="sample-actions batch-assignment">
+      <div class="action-header">
+        <div>
+          <h4>Batch Membership</h4>
+          <p class="detail-meta">
+            ${currentBatches.length ? `In ${currentBatches.length} batch${currentBatches.length === 1 ? "" : "es"}` : "Not assigned to a batch yet."}
+          </p>
+        </div>
+      </div>
+      <div class="tag-row">
+        ${currentBatches.length ? currentBatches.map((batchId) => tag(batchId)).join("") : tag("unbatched")}
+      </div>
+      <form class="inline-batch-form" data-batch-form="${escapeHtml(sample.sample_id)}">
+        <label>
+          Existing batch
+          <select name="batchId">
+            <option value="">Create new batch</option>
+            ${availableBatches.map((batch) => `<option value="${escapeHtml(batch.run_id)}">${escapeHtml(batch.run_id)}</option>`).join("")}
+          </select>
+        </label>
+        <label>
+          New batch id
+          <input name="newBatchId" type="text" placeholder="manual_training_set">
+        </label>
+        <button type="submit">Add to Batch</button>
+      </form>
+    </section>
+  `;
+}
+
 function hasReferenceSet(sample) {
   const referenceImages = sample.reference_images || {};
   return ["front", "left", "right", "back"].every((view) => Boolean(referenceImages[view]));
@@ -1329,6 +1382,7 @@ function renderSampleDetail() {
       ${(sample.variant_tags || []).map((value) => tag(value)).join("")}
     </div>
     ${skeletonSchemaPanel(sample)}
+    ${sampleBatchPanel(sample)}
     ${sampleActionPanel(sample)}
     ${modelPanel(sample)}
     ${gallery("OpenAI References", sample.reference_images, ["front", "left", "right", "back"])}
@@ -1429,6 +1483,19 @@ function batchPayload() {
   };
 }
 
+function trainingPayload() {
+  const formData = new FormData(elements.trainForm);
+  return {
+    epochs: Number(formData.get("epochs") || 40),
+    batchSize: Number(formData.get("batchSize") || 32),
+    numPoints: Number(formData.get("numPoints") || 1024),
+    batchId: formData.get("batchId") || "",
+    device: formData.get("device") || "auto",
+    seed: Number(formData.get("seed") || 20260531),
+    outDir: formData.get("outDir") || "models/qwalk_guide_initializer",
+  };
+}
+
 async function createSample(event) {
   event.preventDefault();
   if (!elements.sampleMorphologySelect.value) {
@@ -1487,6 +1554,27 @@ async function startBatch(event) {
   }
 }
 
+async function startTraining(event) {
+  event.preventDefault();
+  elements.trainButton.disabled = true;
+  elements.statusLine.textContent = "Starting guide initializer training";
+  try {
+    const job = await fetchJson("/api/train-guide-initializer", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(trainingPayload()),
+    });
+    state.selectedJobId = job.job_id;
+    await loadState();
+    await loadJobLog(job.job_id);
+    navigateTo("/jobs");
+  } catch (error) {
+    elements.statusLine.textContent = error.message;
+  } finally {
+    elements.trainButton.disabled = false;
+  }
+}
+
 async function loadJobLog(jobId) {
   const job = await fetchJson(`/api/jobs/${jobId}`);
   state.selectedJobId = jobId;
@@ -1527,6 +1615,26 @@ async function resetStaleSample(sampleId) {
   state.selectedSampleId = sampleId;
   await loadState();
   renderSampleDetail();
+}
+
+async function addSampleToBatch(sampleId, form) {
+  const formData = new FormData(form);
+  const batchId = String(formData.get("batchId") || "").trim();
+  const newBatchId = String(formData.get("newBatchId") || "").trim();
+  elements.statusLine.textContent = "Updating batch membership";
+  await fetchJson(`/api/samples/${encodeURIComponent(sampleId)}/batches`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      batchId,
+      newBatchId,
+      createNew: !batchId,
+    }),
+  });
+  state.selectedSampleId = sampleId;
+  await loadState();
+  renderSampleDetail();
+  elements.statusLine.textContent = "Sample added to batch";
 }
 
 async function saveSettings(event) {
@@ -1571,6 +1679,9 @@ elements.sampleForm.addEventListener("submit", createSample);
 if (elements.runForm) {
   elements.runForm.addEventListener("submit", startBatch);
 }
+if (elements.trainForm) {
+  elements.trainForm.addEventListener("submit", startTraining);
+}
 elements.settingsForm.addEventListener("submit", saveSettings);
 window.addEventListener("nito-three-ready", () => hydrateModelViewers(elements.sampleDetail));
 elements.sampleDetail.addEventListener("click", async (event) => {
@@ -1606,6 +1717,21 @@ elements.sampleDetail.addEventListener("click", async (event) => {
   if (!logButton) return;
   await loadJobLog(logButton.dataset.jobId);
   navigateTo("/jobs");
+});
+elements.sampleDetail.addEventListener("submit", async (event) => {
+  const form = event.target.closest("form[data-batch-form]");
+  if (!form) return;
+  event.preventDefault();
+  const sampleId = form.dataset.batchForm;
+  const button = form.querySelector("button[type='submit']");
+  button.disabled = true;
+  try {
+    await addSampleToBatch(sampleId, form);
+  } catch (error) {
+    elements.statusLine.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
 });
 elements.jobList.addEventListener("click", async (event) => {
   const button = event.target.closest("button[data-job-id]");

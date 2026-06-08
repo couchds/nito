@@ -1517,11 +1517,43 @@ textarea:focus {
   font-size: 12px;
 }
 
-.field-grid {
+.field-grid,
+.form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
   margin-top: 12px;
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.checkbox-row input {
+  width: auto;
+}
+
+.inline-batch-form {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) minmax(160px, 1fr) auto;
+  gap: 12px;
+  align-items: end;
+  margin-top: 12px;
+}
+
+.inline-batch-form button {
+  min-height: 38px;
+}
+
+.advanced-training {
+  margin-top: 12px;
+}
+
+.advanced-training summary {
+  cursor: pointer;
+  font-weight: 700;
 }
 
 .page-heading {
