@@ -1312,9 +1312,9 @@ textarea:focus {
   fill: none;
   stroke-linecap: round;
   stroke-linejoin: round;
-  stroke-width: 18;
+  stroke-width: 15;
   paint-order: stroke;
-  filter: drop-shadow(0 2px 4px rgba(32, 25, 20, 0.22));
+  filter: drop-shadow(0 2px 3px rgba(32, 25, 20, 0.18));
 }
 
 .bone.torso {
@@ -1335,7 +1335,7 @@ textarea:focus {
 
 .bone.ghost {
   stroke: rgba(58, 46, 31, 0.24);
-  stroke-width: 11;
+  stroke-width: 9;
   stroke-dasharray: 26 26;
   filter: none;
 }
@@ -1343,26 +1343,26 @@ textarea:focus {
 .joint-set circle {
   fill: #fffaf0;
   stroke: #201914;
-  stroke-width: 7;
+  stroke-width: 6;
 }
 
 .marker-set circle {
-  fill: rgba(32, 25, 20, 0.9);
+  fill: rgba(32, 25, 20, 0.92);
   stroke: rgba(255, 250, 240, 0.92);
-  stroke-width: 5;
+  stroke-width: 4;
 }
 
 .marker-set path {
   fill: none;
-  stroke: rgba(32, 25, 20, 0.42);
-  stroke-dasharray: 8 8;
+  stroke: rgba(32, 25, 20, 0.32);
+  stroke-dasharray: 7 9;
   stroke-linecap: round;
-  stroke-width: 4;
+  stroke-width: 3;
 }
 
 .marker-set text {
   fill: #fffaf0;
-  font-size: 21px;
+  font-size: 20px;
   font-weight: 820;
   text-anchor: middle;
   dominant-baseline: middle;

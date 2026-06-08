@@ -365,28 +365,28 @@ function skeletonPlacementDiagram(isCompact = false) {
       <div class="placement-diagram-stage">
         <img src="/static/quadruped_ref_image_1.webp" alt="" aria-hidden="true" />
         <svg viewBox="0 0 1536 1024" role="img" aria-label="Nito guide bone placement overlay on a side-view quadruped">
-          <path class="bone torso" d="M455 495 L620 382 L895 395 L1032 315 L1185 250" />
-          <path class="bone tail" d="M455 495 L206 548" />
+          <path class="bone torso" d="M462 474 L620 382 L895 395 L1032 315 L1185 250" />
+          <path class="bone tail" d="M462 474 L206 548" />
           <path class="bone front" d="M980 510 L952 655 L970 780 L1084 800" />
-          <path class="bone rear" d="M485 510 L410 660 L425 785 L512 804" />
+          <path class="bone rear" d="M545 552 L410 660 L425 785 L512 804" />
           <path class="bone ghost" d="M928 515 L905 650 L916 782 L1015 800" />
-          <path class="bone ghost" d="M548 512 L535 646 L582 770 L668 790" />
+          <path class="bone ghost" d="M590 548 L535 646 L582 770 L668 790" />
           <g class="joint-set">
-            <circle cx="455" cy="495" r="16" /><circle cx="620" cy="382" r="16" />
+            <circle cx="462" cy="474" r="16" /><circle cx="620" cy="382" r="16" />
             <circle cx="895" cy="395" r="16" /><circle cx="1032" cy="315" r="16" />
             <circle cx="1185" cy="250" r="16" /><circle cx="206" cy="548" r="16" />
             <circle cx="980" cy="510" r="16" /><circle cx="952" cy="655" r="16" />
             <circle cx="970" cy="780" r="16" /><circle cx="1084" cy="800" r="16" />
-            <circle cx="485" cy="510" r="16" /><circle cx="410" cy="660" r="16" />
+            <circle cx="545" cy="552" r="16" /><circle cx="410" cy="660" r="16" />
             <circle cx="425" cy="785" r="16" /><circle cx="512" cy="804" r="16" />
           </g>
           <g class="marker-set">
-            <path d="M455 495 L420 462" /><circle cx="420" cy="462" r="20" /><text x="420" y="470">1</text>
-            <path d="M895 395 L870 360" /><circle cx="870" cy="360" r="20" /><text x="870" y="368">2</text>
-            <path d="M1185 250 L1212 220" /><circle cx="1212" cy="220" r="20" /><text x="1212" y="228">3</text>
-            <path d="M980 510 L1018 490" /><circle cx="1018" cy="490" r="20" /><text x="1018" y="498">4</text>
-            <path d="M485 510 L512 538" /><circle cx="512" cy="538" r="20" /><text x="512" y="546">5</text>
-            <path d="M1084 800 L1122 795" /><circle cx="1122" cy="795" r="20" /><text x="1122" y="803">6</text>
+            <path d="M462 474 L416 424" /><circle cx="416" cy="424" r="20" /><text x="416" y="432">1</text>
+            <path d="M895 395 L868 340" /><circle cx="868" cy="340" r="20" /><text x="868" y="348">2</text>
+            <path d="M1185 250 L1234 204" /><circle cx="1234" cy="204" r="20" /><text x="1234" y="212">3</text>
+            <path d="M980 510 L1042 486" /><circle cx="1042" cy="486" r="20" /><text x="1042" y="494">4</text>
+            <path d="M545 552 L592 604" /><circle cx="592" cy="604" r="20" /><text x="592" y="612">5</text>
+            <path d="M1084 800 L1144 792" /><circle cx="1144" cy="792" r="20" /><text x="1144" y="800">6</text>
           </g>
         </svg>
       </div>
