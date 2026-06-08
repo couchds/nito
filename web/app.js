@@ -381,12 +381,12 @@ function skeletonPlacementDiagram(isCompact = false) {
             <circle cx="425" cy="785" r="16" /><circle cx="512" cy="804" r="16" />
           </g>
           <g class="marker-set">
-            <circle cx="455" cy="495" r="23" /><text x="455" y="504">1</text>
-            <circle cx="895" cy="395" r="23" /><text x="895" y="404">2</text>
-            <circle cx="1185" cy="250" r="23" /><text x="1185" y="259">3</text>
-            <circle cx="980" cy="510" r="23" /><text x="980" y="519">4</text>
-            <circle cx="485" cy="510" r="23" /><text x="485" y="519">5</text>
-            <circle cx="1084" cy="800" r="23" /><text x="1084" y="809">6</text>
+            <path d="M455 495 L420 462" /><circle cx="420" cy="462" r="20" /><text x="420" y="470">1</text>
+            <path d="M895 395 L870 360" /><circle cx="870" cy="360" r="20" /><text x="870" y="368">2</text>
+            <path d="M1185 250 L1212 220" /><circle cx="1212" cy="220" r="20" /><text x="1212" y="228">3</text>
+            <path d="M980 510 L1018 490" /><circle cx="1018" cy="490" r="20" /><text x="1018" y="498">4</text>
+            <path d="M485 510 L512 538" /><circle cx="512" cy="538" r="20" /><text x="512" y="546">5</text>
+            <path d="M1084 800 L1122 795" /><circle cx="1122" cy="795" r="20" /><text x="1122" y="803">6</text>
           </g>
         </svg>
       </div>
