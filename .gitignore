@@ -48,3 +48,6 @@ desktop.ini
 *.tmp
 *.bak
 data/ui_checks/
+
+# Raw uploaded guide-image sources; optimized app assets live in web/.
+/quadruped_ref_image_*.png

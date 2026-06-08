@@ -75,6 +75,7 @@ mimetypes.add_type("model/gltf-binary", ".glb")
 mimetypes.add_type("model/gltf+json", ".gltf")
 mimetypes.add_type("text/javascript", ".js")
 mimetypes.add_type("text/javascript", ".mjs")
+mimetypes.add_type("image/webp", ".webp")
 
 
 def workflow_python_executable() -> str:

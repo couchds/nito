@@ -346,6 +346,7 @@ function skeletonSchemaCard(schema, options = {}) {
 function skeletonPlacementSummary() {
   return `
     <div class="placement-summary">
+      ${skeletonPlacementDiagram(true)}
       <div>
         <strong>Body landmarks</strong>
         <p>Place pelvis, spine, chest, neck, head, and tail inside the body volume, not on fur, tack, or armor.</p>
@@ -355,6 +356,50 @@ function skeletonPlacementSummary() {
         <p>Use joint centers for upper/lower limb bones and real toe, paw, or hoof contact points for feet.</p>
       </div>
     </div>
+  `;
+}
+
+function skeletonPlacementDiagram(isCompact = false) {
+  return `
+    <figure class="placement-diagram ${isCompact ? "is-compact" : ""}">
+      <div class="placement-diagram-stage">
+        <img src="/static/quadruped_ref_image_1.webp" alt="" aria-hidden="true" />
+        <svg viewBox="0 0 1536 1024" role="img" aria-label="Nito guide bone placement overlay on a side-view quadruped">
+          <path class="bone torso" d="M455 495 L620 382 L895 395 L1032 315 L1185 250" />
+          <path class="bone tail" d="M455 495 L206 548" />
+          <path class="bone front" d="M980 510 L952 655 L970 780 L1084 800" />
+          <path class="bone rear" d="M485 510 L410 660 L425 785 L512 804" />
+          <path class="bone ghost" d="M928 515 L905 650 L916 782 L1015 800" />
+          <path class="bone ghost" d="M548 512 L535 646 L582 770 L668 790" />
+          <g class="joint-set">
+            <circle cx="455" cy="495" r="16" /><circle cx="620" cy="382" r="16" />
+            <circle cx="895" cy="395" r="16" /><circle cx="1032" cy="315" r="16" />
+            <circle cx="1185" cy="250" r="16" /><circle cx="206" cy="548" r="16" />
+            <circle cx="980" cy="510" r="16" /><circle cx="952" cy="655" r="16" />
+            <circle cx="970" cy="780" r="16" /><circle cx="1084" cy="800" r="16" />
+            <circle cx="485" cy="510" r="16" /><circle cx="410" cy="660" r="16" />
+            <circle cx="425" cy="785" r="16" /><circle cx="512" cy="804" r="16" />
+          </g>
+          <g class="marker-set">
+            <circle cx="455" cy="495" r="23" /><text x="455" y="504">1</text>
+            <circle cx="895" cy="395" r="23" /><text x="895" y="404">2</text>
+            <circle cx="1185" cy="250" r="23" /><text x="1185" y="259">3</text>
+            <circle cx="980" cy="510" r="23" /><text x="980" y="519">4</text>
+            <circle cx="485" cy="510" r="23" /><text x="485" y="519">5</text>
+            <circle cx="1084" cy="800" r="23" /><text x="1084" y="809">6</text>
+          </g>
+        </svg>
+      </div>
+      <figcaption>Place guide bones through internal landmarks. Treat fur and surface details as decoration.</figcaption>
+      <div class="placement-diagram-legend" aria-label="Anatomical placement legend">
+        <span><b>1</b> Pelvis / hip anchor</span>
+        <span><b>2</b> Chest / shoulder block</span>
+        <span><b>3</b> Head direction</span>
+        <span><b>4</b> Front limb joints</span>
+        <span><b>5</b> Rear limb joints</span>
+        <span><b>6</b> Foot contact</span>
+      </div>
+    </figure>
   `;
 }
 
@@ -382,6 +427,7 @@ function skeletonPlacementGuide() {
         <h5>Guide Placement Help</h5>
         <p>Use these notes while correcting the Nito guide in Blender. The white/orange bone head is the start of the guide bone; the tail is the end point.</p>
       </div>
+      ${skeletonPlacementDiagram()}
       <div class="placement-help-section">
         <h6>Body guide bones</h6>
         <div class="placement-grid">

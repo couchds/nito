@@ -1070,6 +1070,10 @@ textarea:focus {
   gap: 8px;
 }
 
+.placement-summary .placement-diagram {
+  grid-column: 1 / -1;
+}
+
 .placement-summary div {
   padding: 10px;
   border: 1px solid rgba(58, 46, 31, 0.1);
@@ -1086,6 +1090,165 @@ textarea:focus {
   display: grid;
   gap: 14px;
   padding-top: 2px;
+}
+
+.placement-diagram {
+  position: relative;
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 12px;
+  overflow: hidden;
+  border: 1px solid rgba(183, 138, 69, 0.22);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(27, 92, 83, 0.1), transparent 40%),
+    linear-gradient(180deg, rgba(255, 252, 244, 0.88), rgba(246, 239, 224, 0.66));
+}
+
+.placement-diagram.is-compact {
+  padding: 8px;
+}
+
+.placement-diagram-stage {
+  position: relative;
+  overflow: hidden;
+  aspect-ratio: 3 / 2;
+  border: 1px solid rgba(58, 46, 31, 0.12);
+  border-radius: 6px;
+  background:
+    radial-gradient(circle at 54% 60%, rgba(255, 252, 244, 0.88), rgba(248, 240, 220, 0.62) 52%, rgba(232, 224, 202, 0.56)),
+    #f7efe0;
+}
+
+.placement-diagram-stage::after {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  content: "";
+  background:
+    linear-gradient(90deg, rgba(255, 252, 244, 0.42), transparent 15%, transparent 85%, rgba(255, 252, 244, 0.46)),
+    linear-gradient(180deg, rgba(255, 252, 244, 0.32), transparent 20%, transparent 82%, rgba(255, 252, 244, 0.5));
+}
+
+.placement-diagram-stage img,
+.placement-diagram-stage svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.placement-diagram-stage img {
+  object-fit: cover;
+  opacity: 0.58;
+  filter: brightness(1.22) contrast(0.78) saturate(0.72);
+  transform: scale(1.02);
+}
+
+.placement-diagram-stage svg {
+  z-index: 1;
+  overflow: visible;
+}
+
+.placement-diagram.is-compact .placement-diagram-stage {
+  min-height: 150px;
+}
+
+.placement-diagram figcaption {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.bone {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 18;
+  paint-order: stroke;
+  filter: drop-shadow(0 2px 4px rgba(32, 25, 20, 0.22));
+}
+
+.bone.torso {
+  stroke: rgba(183, 130, 53, 0.9);
+}
+
+.bone.front {
+  stroke: rgba(27, 106, 98, 0.92);
+}
+
+.bone.rear {
+  stroke: rgba(115, 86, 166, 0.9);
+}
+
+.bone.tail {
+  stroke: rgba(141, 90, 36, 0.82);
+}
+
+.bone.ghost {
+  stroke: rgba(58, 46, 31, 0.24);
+  stroke-width: 11;
+  stroke-dasharray: 26 26;
+  filter: none;
+}
+
+.joint-set circle {
+  fill: #fffaf0;
+  stroke: #201914;
+  stroke-width: 7;
+}
+
+.marker-set circle {
+  fill: rgba(32, 25, 20, 0.9);
+  stroke: rgba(255, 250, 240, 0.92);
+  stroke-width: 6;
+}
+
+.marker-set text {
+  fill: #fffaf0;
+  font-size: 24px;
+  font-weight: 820;
+  text-anchor: middle;
+  dominant-baseline: middle;
+}
+
+.placement-diagram-legend {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 6px;
+}
+
+.placement-diagram-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid rgba(58, 46, 31, 0.1);
+  border-radius: 6px;
+  background: rgba(255, 250, 240, 0.68);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.25;
+}
+
+.placement-diagram-legend b {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #201914;
+  color: #fffaf0;
+  font-size: 11px;
+}
+
+.placement-diagram.is-compact .marker-set,
+.placement-diagram.is-compact .placement-diagram-legend,
+.placement-diagram.is-compact figcaption {
+  display: none;
 }
 
 .placement-guide-heading {
