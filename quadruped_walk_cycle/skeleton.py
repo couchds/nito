@@ -1,8 +1,16 @@
 import bpy
+import importlib
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
 from bpy.props import BoolProperty, EnumProperty, FloatProperty, StringProperty
 from bpy.types import Operator
 from math import cos, pi, sin
 from mathutils import Matrix, Vector
+from pathlib import Path
 
 from .constants import FK_FIELDS, IK_FIELDS, LEG_ORDER
 from .rig_utils import store_base_pose
@@ -78,6 +86,9 @@ MESH_FORWARD_AXIS_ITEMS = (
     ("POS_X", "+X", "Mesh faces toward positive X"),
     ("NEG_X", "-X", "Mesh faces toward negative X"),
 )
+EXPLICIT_MESH_FORWARD_AXES = {"POS_Y", "NEG_Y", "POS_X", "NEG_X"}
+REPO_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_GUIDE_INITIALIZER_CHECKPOINT = REPO_ROOT / "models" / "qwalk_guide_initializer" / "qwalk_guide_initializer.pt"
 
 QUADRUPED_PROFILES = {
     "MEDIUM": {
@@ -375,6 +386,103 @@ def mesh_world_points(mesh_object, context):
     finally:
         evaluated.to_mesh_clear()
     return [mesh_object.matrix_world @ Vector(corner) for corner in mesh_object.bound_box]
+
+
+def external_python_executable():
+    """Return a Python executable that can run the repo's training scripts."""
+    candidates = [
+        os.environ.get("NITO_PYTHON", ""),
+        shutil.which("python") or "",
+        shutil.which("py") or "",
+        r"C:\Python314\python.exe",
+    ]
+    for candidate in candidates:
+        if not candidate:
+            continue
+        if candidate == sys.executable and Path(candidate).name.lower().startswith("blender"):
+            continue
+        if candidate == "py" or Path(candidate).exists():
+            return candidate
+    return ""
+
+
+def export_mesh_world_obj(mesh_object, context, out_path):
+    """Export one mesh object's evaluated world-space geometry to OBJ."""
+    depsgraph = context.evaluated_depsgraph_get()
+    evaluated = mesh_object.evaluated_get(depsgraph)
+    mesh = evaluated.to_mesh()
+    try:
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        with out_path.open("w", encoding="utf-8") as handle:
+            handle.write(f"# Nito guide initializer mesh export: {mesh_object.name}\n")
+            for vertex in mesh.vertices:
+                point = evaluated.matrix_world @ vertex.co
+                handle.write(f"v {point.x:.6f} {point.y:.6f} {point.z:.6f}\n")
+            for polygon in mesh.polygons:
+                indices = " ".join(str(index + 1) for index in polygon.vertices)
+                handle.write(f"f {indices}\n")
+    finally:
+        evaluated.to_mesh_clear()
+
+
+def profile_key_for_morphology(morphology):
+    """Map learned morphology labels to Nito guide profile keys."""
+    normalized = str(morphology or "").strip().lower()
+    if normalized in {"low_reptile", "shell_reptile"}:
+        return "SPRAWLING"
+    if normalized == "long_legged_ungulate":
+        return "HORSE"
+    if normalized == "stocky_quadruped":
+        return "STOCKY"
+    return "MEDIUM"
+
+
+def create_learned_guide_from_mesh(context, mesh_object, guide_name, mesh_forward_axis, checkpoint_path):
+    """Create a Nito guide by running the trained guide initializer externally."""
+    checkpoint = Path(checkpoint_path).expanduser().resolve()
+    if not checkpoint.exists():
+        raise FileNotFoundError(f"Guide initializer checkpoint not found: {checkpoint}")
+    python_exe = external_python_executable()
+    if not python_exe:
+        raise RuntimeError("Could not find external Python for the trained guide initializer.")
+
+    with tempfile.TemporaryDirectory(prefix="nito_guide_") as temp_dir:
+        temp_root = Path(temp_dir)
+        obj_path = temp_root / f"{mesh_object.name}_nito_input.obj"
+        prediction_path = temp_root / f"{mesh_object.name}_nito_prediction.json"
+        export_mesh_world_obj(mesh_object, context, obj_path)
+        command = [
+            python_exe,
+            str(REPO_ROOT / "scripts" / "predict_guide_initializer.py"),
+            str(obj_path),
+            "--checkpoint",
+            str(checkpoint),
+            "--out",
+            str(prediction_path),
+            "--mesh-forward-axis",
+            mesh_forward_axis,
+            "--device",
+            "auto",
+        ]
+        subprocess.run(command, cwd=str(REPO_ROOT), check=True)
+        metadata = json.loads(prediction_path.read_text(encoding="utf-8"))
+
+        scripts_path = str(REPO_ROOT / "scripts")
+        if scripts_path not in sys.path:
+            sys.path.insert(0, scripts_path)
+        importer = importlib.import_module("import_synthetic_quadruped_sample")
+        guide = importer.create_guide_armature(prediction_path, metadata)
+        guide.name = guide_name
+        guide.data.name = f"{guide_name}_Data"
+        guide["qwg_source_mesh"] = mesh_object.name
+        guide["qwg_fit_forward_axis"] = metadata.get("mesh_forward_axis", mesh_forward_axis)
+        guide["qwg_profile"] = profile_key_for_morphology(metadata.get("predicted_morphology_type", ""))
+        guide["qwg_ml_predicted_morphology_type"] = metadata.get("predicted_morphology_type", "")
+        guide["qwg_ml_predicted_animal_type"] = metadata.get("predicted_animal_type", "")
+        guide["qwg_ml_prediction"] = True
+        guide["qwg_ml_checkpoint"] = str(checkpoint)
+        guide["qwg_synthetic_label"] = ""
+        return guide, metadata
 
 
 def mesh_world_bounds(mesh_object, context, robust=True, top_percentile=88.0):
@@ -813,6 +921,38 @@ def resolve_fit_forward_axis(points, requested_axis, fit_amount, robust=True, to
 
     candidates.sort(reverse=True)
     return candidates[0][1]
+
+
+def mesh_metadata_forward_axis(mesh_object, requested_axis):
+    """Return mesh-stored forward axis metadata when AUTO can trust it."""
+    if requested_axis != "AUTO":
+        return requested_axis
+
+    standardized = bool(mesh_object.get("qwalk_orientation_standardized", False))
+    canonical_axis = str(mesh_object.get("qwalk_canonical_forward_axis", "")).upper()
+    source_axis = str(mesh_object.get("qwalk_source_forward_axis", "")).upper()
+
+    if standardized and canonical_axis in EXPLICIT_MESH_FORWARD_AXES:
+        return canonical_axis
+    if not standardized and source_axis in EXPLICIT_MESH_FORWARD_AXES:
+        return source_axis
+    if canonical_axis in EXPLICIT_MESH_FORWARD_AXES:
+        return canonical_axis
+    return ""
+
+
+def resolve_mesh_forward_axis(mesh_object, points, requested_axis, fit_amount, robust=True, top_percentile=88.0):
+    """Resolve a mesh forward axis, preferring Nito import metadata over silhouette guesses."""
+    metadata_axis = mesh_metadata_forward_axis(mesh_object, requested_axis)
+    if metadata_axis:
+        return metadata_axis
+    return resolve_fit_forward_axis(
+        points,
+        requested_axis,
+        fit_amount,
+        robust=robust,
+        top_percentile=top_percentile,
+    )
 
 
 def active_mesh(context):
@@ -1982,7 +2122,8 @@ class QWG_OT_create_fitted_quadruped_armature(Operator):
             return {"CANCELLED"}
 
         world_points = mesh_world_points(mesh_object, context)
-        resolved_forward_axis = resolve_fit_forward_axis(
+        resolved_forward_axis = resolve_mesh_forward_axis(
+            mesh_object,
             world_points,
             self.mesh_forward_axis,
             self.fit_amount,
@@ -2077,6 +2218,16 @@ class QWG_OT_create_fit_guides(Operator):
         min=60.0,
         max=100.0,
     )
+    use_learned_initializer: BoolProperty(
+        name="Use Trained Model",
+        description="Use the trained guide initializer checkpoint for initial guide placement when available",
+        default=True,
+    )
+    learned_checkpoint: StringProperty(
+        name="Guide Model",
+        description="Path to qwalk_guide_initializer.pt",
+        default=str(DEFAULT_GUIDE_INITIALIZER_CHECKPOINT),
+    )
 
     @classmethod
     def poll(cls, context):
@@ -2091,13 +2242,41 @@ class QWG_OT_create_fit_guides(Operator):
             return {"CANCELLED"}
 
         world_points = mesh_world_points(mesh_object, context)
-        resolved_forward_axis = resolve_fit_forward_axis(
+        resolved_forward_axis = resolve_mesh_forward_axis(
+            mesh_object,
             world_points,
             self.mesh_forward_axis,
             self.fit_amount,
             robust=self.robust_bounds,
             top_percentile=self.top_percentile,
         )
+        guide_name = self.guide_name.strip() or f"{mesh_object.name}_Nito_Guide"
+        if self.use_learned_initializer:
+            try:
+                guide, metadata = create_learned_guide_from_mesh(
+                    context,
+                    mesh_object,
+                    guide_name,
+                    resolved_forward_axis,
+                    self.learned_checkpoint,
+                )
+                bpy.ops.object.select_all(action="DESELECT")
+                guide.select_set(True)
+                context.view_layer.objects.active = guide
+                confidence = metadata.get("predicted_morphology_confidence", 0.0)
+                self.report(
+                    {"INFO"},
+                    "Created learned Nito guide for {mesh} using {axis} ({morphology}, {confidence:.2f}).".format(
+                        mesh=mesh_object.name,
+                        axis=resolved_forward_axis,
+                        morphology=metadata.get("predicted_morphology_type", "unknown"),
+                        confidence=float(confidence or 0.0),
+                    ),
+                )
+                return {"FINISHED"}
+            except Exception as error:
+                self.report({"WARNING"}, f"Trained guide initializer unavailable; using geometric fit. {error}")
+
         fit_points, angle = rotate_points_in_fit_space(world_points, resolved_forward_axis)
         _, _, mesh_size = robust_bounds_from_points(
             fit_points,
@@ -2113,7 +2292,6 @@ class QWG_OT_create_fit_guides(Operator):
             top_percentile=self.top_percentile,
         )
 
-        guide_name = self.guide_name.strip() or f"{mesh_object.name}_Nito_Guide"
         guide = create_guide_armature(
             context,
             guide_name,

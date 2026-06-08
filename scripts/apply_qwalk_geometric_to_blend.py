@@ -104,6 +104,7 @@ def main() -> None:
         fit_amount=0.88,
         robust_bounds=True,
         top_percentile=88.0,
+        use_learned_initializer=False,
     )
     if guide_result != {"FINISHED"}:
         raise RuntimeError(f"Create Fitting Guides failed: {guide_result}")
