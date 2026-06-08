@@ -26,6 +26,14 @@
           <p id="statusLine">Loading Nito workspace</p>
         </div>
       </div>
+      <nav class="topnav" aria-label="Pages">
+        <a class="tab is-active" href="/">Home</a>
+        <a class="tab" href="/create">Create</a>
+        <a class="tab" href="/samples">Samples</a>
+        <a class="tab" href="/batches">Batches</a>
+        <a class="tab" href="/jobs">Jobs</a>
+        <a class="tab" href="/settings">Settings</a>
+      </nav>
       <div class="topbar-actions">
         <button id="refreshButton" type="button">Refresh</button>
       </div>
@@ -33,16 +41,36 @@
 
     <main class="shell">
       <section class="workspace">
-        <nav class="tabs" aria-label="Pages">
-          <a class="tab is-active" href="/">Home</a>
-          <a class="tab" href="/samples">Samples</a>
-          <a class="tab" href="/batches">Batches</a>
-          <a class="tab" href="/create">Create</a>
-          <a class="tab" href="/jobs">Jobs</a>
-          <a class="tab" href="/settings">Settings</a>
-        </nav>
-
         <section id="homeView" class="view is-active">
+          <section class="home-intro content-band">
+            <div class="home-intro-copy">
+              <span class="section-kicker">Welcome to Nito</span>
+              <h2>Build walk-cycle training assets from prompt-based quadruped concepts.</h2>
+              <p>
+                Nito helps turn an animal prompt into reference views, a generated 3D model, a Blender label file,
+                and finally a verified skeleton label that can be used for training.
+              </p>
+              <div class="home-cta-row">
+                <a class="button-link primary-link" href="/create">Create First Sample</a>
+                <a class="button-link" href="/settings">Check Blender Settings</a>
+              </div>
+            </div>
+            <ol class="first-run-list" aria-label="First-time workflow">
+              <li>
+                <strong>Start in Create</strong>
+                <span>Describe the character, pick the closest skeleton type, and start the automatic pipeline.</span>
+              </li>
+              <li>
+                <strong>Review in Samples</strong>
+                <span>Open the sample when Blender prep is ready, place the guide bones, then export the verified label.</span>
+              </li>
+              <li>
+                <strong>Watch Jobs and Batches</strong>
+                <span>Use Jobs for live pipeline output and Batches to review grouped training runs.</span>
+              </li>
+            </ol>
+          </section>
+
           <div class="metric-strip">
             <div>
               <span id="batchCount">0</span>
