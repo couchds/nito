@@ -1,23 +1,26 @@
 {
   "source": "real_qwalk_labels",
-  "count": 3,
-  "verified_count": 2,
+  "count": 4,
+  "verified_count": 3,
   "animal_counts": {
     "horse": 1,
-    "unknown": 2
+    "unknown": 2,
+    "turtle": 1
   },
   "split_counts": {
-    "train": 3
+    "train": 4
   },
   "label_schema": {
     "animal_type": [
       "horse",
-      "unknown"
+      "unknown",
+      "turtle"
     ],
     "morphology_type": [
       "ungulate",
       "long_legged_ungulate",
-      "medium_quadruped"
+      "medium_quadruped",
+      "low_reptile"
     ],
     "guide_bones": "QWalk guide bone head/tail coordinates in mesh space",
     "landmarks": "Simplified joint/centerline landmarks derived from guide_bones",

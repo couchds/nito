@@ -102,6 +102,24 @@ def make_label_mesh(meshes: list[bpy.types.Object], name: str, join_meshes: bool
     return label_mesh
 
 
+def remove_imported_armatures(label_mesh: bpy.types.Object) -> int:
+    """Remove source-file rigs so the label blend opens with only Nito-generated guides."""
+    label_mesh.parent = None
+    for modifier in list(label_mesh.modifiers):
+        if modifier.type == "ARMATURE":
+            label_mesh.modifiers.remove(modifier)
+
+    removed = 0
+    for obj in list(bpy.context.scene.objects):
+        if obj.type != "ARMATURE":
+            continue
+        if obj.get("qwg_is_guide") or obj.get("qwg_guides") or obj.name.startswith("Nito"):
+            continue
+        bpy.data.objects.remove(obj, do_unlink=True)
+        removed += 1
+    return removed
+
+
 def select_active(obj: bpy.types.Object) -> None:
     if bpy.ops.object.mode_set.poll():
         bpy.ops.object.mode_set(mode="OBJECT")
@@ -165,12 +183,14 @@ def main() -> None:
     clear_scene()
     import_model(model_path)
     label_mesh = make_label_mesh(imported_meshes(), args.mesh_name, join_meshes=not args.no_join_meshes)
+    removed_armatures = remove_imported_armatures(label_mesh)
     resolved_source_axis = normalize_label_mesh(label_mesh, args.source_forward_axis, args.target_forward_axis)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     bpy.ops.wm.save_as_mainfile(filepath=str(output_path))
     print(
         f"Imported {model_path} into {output_path}; label mesh={label_mesh.name}; "
-        f"normalized {resolved_source_axis} -> {args.target_forward_axis}"
+        f"normalized {resolved_source_axis} -> {args.target_forward_axis}; "
+        f"removed imported armatures={removed_armatures}"
     )
 
 

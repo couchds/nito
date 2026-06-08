@@ -203,6 +203,47 @@ QUADRUPED_PROFILES = {
         },
         "control_scale": 1.15,
     },
+    "SPRAWLING": {
+        "label": "Sprawling Quadruped",
+        "root": {"head": (-0.30, 0.0, 0.0), "tail": (0.30, 0.0, 0.0)},
+        "body": {"head": (0.0, -0.82, 0.72), "tail": (0.0, 0.74, 0.78)},
+        "spine": [
+            ("pelvis", (0.0, -0.82, 0.68), (0.0, -0.38, 0.72)),
+            ("spine_01", (0.0, -0.38, 0.72), (0.0, 0.16, 0.75)),
+            ("chest", (0.0, 0.16, 0.75), (0.0, 0.78, 0.76)),
+        ],
+        "neck": {"head": (0.0, 0.78, 0.76), "tail": (0.0, 1.06, 0.80)},
+        "head": {"head": (0.0, 1.06, 0.80), "tail": (0.0, 1.34, 0.74)},
+        "tail": [
+            ("tail_01", (0.0, -0.82, 0.68), (0.0, -1.02, 0.66)),
+            ("tail_02", (0.0, -1.02, 0.66), (0.0, -1.20, 0.60)),
+        ],
+        "leg_width_front": 0.30,
+        "leg_width_rear": 0.32,
+        "front_leg": {
+            "anchor_parent": "chest",
+            "guide": "scapula",
+            "guide_head": (0.00, 0.56, 0.74),
+            "guide_tail": (0.08, 0.48, 0.50),
+            "upper_head": (0.08, 0.48, 0.50),
+            "upper_tail": (0.20, 0.44, 0.30),
+            "lower_tail": (0.30, 0.52, 0.13),
+            "foot_tail": (0.36, 0.70, 0.05),
+            "pole": (0.48, 0.24, 0.28),
+        },
+        "rear_leg": {
+            "anchor_parent": "pelvis",
+            "guide": "hip",
+            "guide_head": (0.00, -0.70, 0.68),
+            "guide_tail": (0.08, -0.74, 0.46),
+            "upper_head": (0.08, -0.74, 0.46),
+            "upper_tail": (0.20, -0.64, 0.28),
+            "lower_tail": (0.30, -0.50, 0.13),
+            "foot_tail": (0.36, -0.32, 0.05),
+            "pole": (0.48, -0.88, 0.26),
+        },
+        "control_scale": 0.9,
+    },
 }
 
 
@@ -213,7 +254,8 @@ def scaled(point, scale):
 
 def mirrored_point(point, x):
     """Return a profile point with an assigned X coordinate."""
-    return (x, point[1], point[2])
+    side = 1.0 if x >= 0.0 else -1.0
+    return (x + side * point[0], point[1], point[2])
 
 
 def profile_items():
@@ -312,13 +354,24 @@ def percentile(values, amount):
 
 
 def mesh_world_points(mesh_object, context):
-    """Return evaluated mesh vertices in world space."""
+    """Return evaluated mesh vertices and face samples in world space."""
     depsgraph = context.evaluated_depsgraph_get()
     evaluated = mesh_object.evaluated_get(depsgraph)
     mesh = evaluated.to_mesh()
     try:
         if mesh and mesh.vertices:
-            return [evaluated.matrix_world @ vertex.co for vertex in mesh.vertices]
+            matrix = evaluated.matrix_world
+            points = [matrix @ vertex.co for vertex in mesh.vertices]
+            polygons = getattr(mesh, "polygons", None)
+            if polygons:
+                face_step = max(1, len(polygons) // 2400)
+                for index in range(0, len(polygons), face_step):
+                    polygon = polygons[index]
+                    points.append(matrix @ polygon.center)
+                    if len(polygon.vertices) >= 3:
+                        vertices = [mesh.vertices[index].co for index in polygon.vertices]
+                        points.append(matrix @ ((vertices[0] + vertices[1] + vertices[2]) / 3.0))
+            return points
     finally:
         evaluated.to_mesh_clear()
     return [mesh_object.matrix_world @ Vector(corner) for corner in mesh_object.bound_box]
@@ -488,6 +541,24 @@ def measured_leg_levels(points, foot_y, radius, ground_z, body_low_z, fallback_u
     return percentile(zs, 68.0), percentile(zs, 32.0)
 
 
+def contact_landmark(points, fallback_y, fallback_x_offset, x_center, y_min, y_max, ground_z, height):
+    """Return a foot/contact landmark from low mesh samples in a Y range."""
+    contact_z = ground_z + height * 0.22
+    candidates = [
+        point
+        for point in points
+        if y_min <= point.y <= y_max and point.z <= contact_z
+    ]
+    if len(candidates) < 5:
+        return fallback_y, fallback_x_offset
+
+    y_values = [point.y for point in candidates]
+    x_offsets = [abs(point.x - x_center) for point in candidates]
+    y_center = percentile(y_values, 50.0)
+    x_offset = max(percentile(x_offsets, 72.0), fallback_x_offset * 0.65)
+    return y_center, x_offset
+
+
 def build_landmark_profile(points, profile_key, fit_amount, robust=True, top_percentile=88.0):
     """Build a temporary profile from mesh-derived body and foot landmarks."""
     local_min, local_max, local_size = robust_bounds_from_points(points, robust, top_percentile)
@@ -541,6 +612,7 @@ def build_landmark_profile(points, profile_key, fit_amount, robust=True, top_per
     spine_z = measured_back_z(spine_points, spine_a_y, slice_radius, fallback_spine_z)
     mid_spine_z = measured_back_z(spine_points, spine_b_y, slice_radius, fallback_spine_z)
     chest_z = measured_back_z(spine_points, chest_y, slice_radius, fallback_spine_z)
+    x_center = (local_min.x + local_max.x) * 0.5
 
     low_points = [
         point
@@ -562,12 +634,36 @@ def build_landmark_profile(points, profile_key, fit_amount, robust=True, top_per
 
     full_tail_y = inset(local_min.y, body_center_y, min(fit_amount, 1.15))
     full_head_y = inset(local_max.y, body_center_y, min(fit_amount, 1.15))
-    x_center = (local_min.x + local_max.x) * 0.5
     low_offsets = [abs(point.x - x_center) for point in low_points]
     if low_offsets:
         leg_width = max(percentile(low_offsets, 76.0) * fit_amount, height * 0.055)
     else:
         leg_width = max(width * 0.28 * fit_amount, height * 0.055)
+    rear_foot_y, rear_foot_x = contact_landmark(
+        points,
+        rear_foot_y,
+        leg_width,
+        x_center,
+        local_min.y + length * 0.06,
+        body_center_y - body_length * 0.04,
+        ground_z,
+        height,
+    )
+    front_foot_y, front_foot_x = contact_landmark(
+        points,
+        front_foot_y,
+        leg_width,
+        x_center,
+        body_center_y + body_length * 0.04,
+        local_max.y - length * 0.06,
+        ground_z,
+        height,
+    )
+    rear_foot_y = inset(clamp(rear_foot_y, local_min.y + length * 0.08, body_center_y - body_length * 0.08), body_center_y, fit_amount)
+    front_foot_y = inset(clamp(front_foot_y, body_center_y + body_length * 0.08, local_max.y - length * 0.08), body_center_y, fit_amount)
+    leg_width_front = max(front_foot_x * fit_amount, height * 0.055)
+    leg_width_rear = max(rear_foot_x * fit_amount, height * 0.055)
+    leg_width = max(leg_width_front, leg_width_rear)
     root_width = max(width * 0.34, height * 0.08)
     foot_z = ground_z + height * 0.035
 
@@ -603,6 +699,20 @@ def build_landmark_profile(points, profile_key, fit_amount, robust=True, top_per
         body_length,
         origin,
     )
+    if profile_key == "SPRAWLING":
+        def with_x(point, x_value):
+            return (x_value, point[1], point[2])
+
+        for leg_profile, sampled_width in ((front_leg, leg_width_front), (rear_leg, leg_width_rear)):
+            sprawl_offset = max(sampled_width * 0.28, height * 0.08)
+            foot_offset = max(sampled_width * 0.58, height * 0.14)
+            leg_profile["guide_head"] = with_x(leg_profile["guide_head"], 0.0)
+            leg_profile["guide_tail"] = with_x(leg_profile["guide_tail"], sprawl_offset * 0.45)
+            leg_profile["upper_head"] = with_x(leg_profile["upper_head"], sprawl_offset * 0.45)
+            leg_profile["upper_tail"] = with_x(leg_profile["upper_tail"], sprawl_offset)
+            leg_profile["lower_tail"] = with_x(leg_profile["lower_tail"], foot_offset * 0.82)
+            leg_profile["foot_tail"] = with_x(leg_profile["foot_tail"], foot_offset)
+            leg_profile["pole"] = with_x(leg_profile["pole"], foot_offset * 1.15)
 
     label = QUADRUPED_PROFILES.get(profile_key, QUADRUPED_PROFILES["MEDIUM"])["label"]
     profile = {
@@ -628,8 +738,8 @@ def build_landmark_profile(points, profile_key, fit_amount, robust=True, top_per
                 rel(x_center, body_y_min - max((body_y_min - full_tail_y) * 0.82, body_length * 0.14), pelvis_z - height * 0.06),
             ),
         ],
-        "leg_width_front": leg_width,
-        "leg_width_rear": leg_width,
+        "leg_width_front": leg_width_front,
+        "leg_width_rear": leg_width_rear,
         "front_leg": front_leg,
         "rear_leg": rear_leg,
         "control_scale": max(height, length * 0.35),

@@ -36,6 +36,8 @@ MODEL_EXTENSIONS = {".glb", ".gltf"}
 REFERENCE_ORDER = ("front", "left", "right", "back")
 REVIEW_ORDER = ("front", "left", "right", "rear", "top", "quarter")
 LABEL_SPLITS = ("train", "val", "test")
+MESH_FORWARD_AXIS_CHOICES = {"AUTO", "POS_X", "NEG_X", "POS_Y", "NEG_Y"}
+LABEL_PROFILE_CHOICES = {"AUTO", "MEDIUM", "STOCKY", "HORSE", "SPRAWLING"}
 STALE_JOB_SECONDS = 15 * 60
 DEFAULT_COMMAND_TIMEOUT_SECONDS = 30 * 60
 COMMAND_TIMEOUT_SECONDS = {
@@ -152,6 +154,30 @@ def skeleton_schema_id_for_body_plan(label_schema: dict[str, Any], body_plan: st
     normalized_body_plan = LEGACY_BODY_PLAN_ALIASES.get(str(body_plan or "").strip(), str(body_plan or "").strip())
     schema_id = mapping.get(normalized_body_plan, "")
     return str(schema_id or "").strip()
+
+
+def label_profile_for_body_plan(body_plan: str) -> str:
+    normalized = LEGACY_BODY_PLAN_ALIASES.get(str(body_plan or "").strip(), str(body_plan or "").strip())
+    if normalized in {"low_reptile", "shell_reptile"}:
+        return "SPRAWLING"
+    if normalized == "long_legged_ungulate":
+        return "HORSE"
+    return "AUTO"
+
+
+def label_profile_for_state(state: dict[str, Any]) -> str:
+    explicit = str(state.get("label_profile") or "").strip().upper()
+    if explicit and explicit != "AUTO" and explicit in LABEL_PROFILE_CHOICES:
+        return explicit
+    return label_profile_for_body_plan(body_plan_value(state))
+
+
+def mesh_forward_axis_for_state(state: dict[str, Any]) -> str:
+    for key in ("source_mesh_forward_axis", "mesh_forward_axis"):
+        axis = str(state.get(key) or "").strip().upper()
+        if axis in MESH_FORWARD_AXIS_CHOICES:
+            return axis
+    return "AUTO"
 
 
 def is_page_route(path: str) -> bool:
@@ -590,6 +616,12 @@ class WorkflowStore:
                 unique.append(sample_id)
         return unique
 
+    def batch_path_for_id(self, batch_id_value: str) -> tuple[str, Path]:
+        batch_id = safe_token(batch_id_value, "")
+        if not batch_id or batch_id != batch_id_value:
+            raise ValueError("Invalid batch id.")
+        return batch_id, self.work_root / "batch_runs" / f"{batch_id}.json"
+
     def add_sample_to_batch(self, sample_id_value: str, payload: dict[str, Any]) -> dict[str, Any]:
         sample_id = safe_token(sample_id_value, "")
         if not sample_id or sample_id != sample_id_value:
@@ -636,6 +668,50 @@ class WorkflowStore:
         run["updated_at"] = now
         write_json(batch_path, run)
         return {"batch_id": batch_id, "sample_id": sample_id, "sample_ids": created, "summary_path": str(batch_path)}
+
+    def delete_batch(self, batch_id_value: str) -> dict[str, Any]:
+        batch_id, batch_path = self.batch_path_for_id(batch_id_value)
+        if not batch_path.exists():
+            raise ValueError(f"Batch not found: {batch_id}")
+        batch_path.unlink()
+        return {"batch_id": batch_id, "deleted": True}
+
+    def remove_sample_from_batch(self, batch_id_value: str, sample_id_value: str) -> dict[str, Any]:
+        batch_id, batch_path = self.batch_path_for_id(batch_id_value)
+        sample_id = safe_token(sample_id_value, "")
+        if not sample_id or sample_id != sample_id_value:
+            raise ValueError("Invalid sample id.")
+        if not batch_path.exists():
+            raise ValueError(f"Batch not found: {batch_id}")
+
+        run = read_json(batch_path, {})
+        if not isinstance(run, dict) or not run:
+            raise ValueError(f"Batch is empty or invalid: {batch_id}")
+        before = self.batch_sample_ids(run)
+
+        run["created"] = [
+            item
+            for item in run.get("created", [])
+            if isinstance(item, str) and item and item != sample_id
+        ]
+        samples = run.get("samples", [])
+        if isinstance(samples, list):
+            run["samples"] = [
+                item
+                for item in samples
+                if not (isinstance(item, dict) and item.get("sample_id") == sample_id)
+            ]
+        else:
+            run["samples"] = []
+
+        after = self.batch_sample_ids(run)
+        if len(after) == len(before):
+            raise ValueError(f"Sample {sample_id} is not in batch {batch_id}.")
+
+        run["count"] = len(after)
+        run["updated_at"] = int(time.time())
+        write_json(batch_path, run)
+        return {"batch_id": batch_id, "sample_id": sample_id, "sample_ids": after, "summary_path": str(batch_path)}
 
     def sample_membership(self) -> dict[str, list[str]]:
         membership: dict[str, list[str]] = {}
@@ -1094,6 +1170,8 @@ class WorkflowStore:
         elif action == "poll-tripo":
             commands = [self.workflow_command("poll-tripo", "--sample-id", sample_id)]
         elif action == "prepare-label-work":
+            profile = label_profile_for_state(state)
+            source_axis = mesh_forward_axis_for_state(state)
             commands = [
                 self.workflow_command(
                     "prepare-label-work",
@@ -1101,6 +1179,10 @@ class WorkflowStore:
                     sample_id,
                     "--blender",
                     self.blender_path(),
+                    "--profile",
+                    profile,
+                    "--mesh-forward-axis",
+                    source_axis,
                 )
             ]
         elif action == "export-verified":
@@ -1124,6 +1206,8 @@ class WorkflowStore:
             job_payload["faceLimit"] = face_limit
             commands = self.pipeline_commands_for_sample(sample_id, state, face_limit)
             if payload.get("prepareLabelWork") and not self.state_has_label_work_file(state):
+                profile = label_profile_for_state(state)
+                source_axis = mesh_forward_axis_for_state(state)
                 commands.append(
                     self.workflow_command(
                         "prepare-label-work",
@@ -1131,6 +1215,10 @@ class WorkflowStore:
                         sample_id,
                         "--blender",
                         self.blender_path(),
+                        "--profile",
+                        profile,
+                        "--mesh-forward-axis",
+                        source_axis,
                     )
                 )
         else:
@@ -1302,8 +1390,13 @@ class WorkflowStore:
         variant_tags = string_list(payload.get("variantTags"))
         if armor_state and armor_state not in variant_tags:
             variant_tags.insert(0, armor_state)
-        label_profile = str(payload.get("labelProfile") or "AUTO").strip() or "AUTO"
-        mesh_forward_axis = str(payload.get("meshForwardAxis") or "POS_X").strip() or "POS_X"
+        default_label_profile = label_profile_for_body_plan(morphology_type)
+        label_profile = str(payload.get("labelProfile") or default_label_profile).strip().upper() or default_label_profile
+        if label_profile not in LABEL_PROFILE_CHOICES:
+            label_profile = default_label_profile
+        mesh_forward_axis = str(payload.get("meshForwardAxis") or "AUTO").strip().upper() or "AUTO"
+        if mesh_forward_axis not in MESH_FORWARD_AXIS_CHOICES:
+            mesh_forward_axis = "AUTO"
         skeleton_schema_id = skeleton_schema_id_for_body_plan(self.catalog().get("label_schema", {}), morphology_type)
         now = int(time.time())
         state = {
@@ -1550,6 +1643,21 @@ class QWalkUIHandler(BaseHTTPRequestHandler):
                 action = unquote(parts[4])
                 job = self.store.start_sample_action(sample_id, action, payload)
                 self.send_json(job, status=202)
+            else:
+                self.send_error(404, "Not found")
+        except Exception as error:
+            self.send_json({"error": str(error)}, status=400)
+
+    def do_DELETE(self) -> None:
+        parsed = urlparse(self.path)
+        try:
+            parts = parsed.path.strip("/").split("/")
+            if len(parts) == 3 and parts[0] == "api" and parts[1] == "batches":
+                result = self.store.delete_batch(unquote(parts[2]))
+                self.send_json(result)
+            elif len(parts) == 5 and parts[0] == "api" and parts[1] == "batches" and parts[3] == "samples":
+                result = self.store.remove_sample_from_batch(unquote(parts[2]), unquote(parts[4]))
+                self.send_json(result)
             else:
                 self.send_error(404, "Not found")
         except Exception as error:

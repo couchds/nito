@@ -30,7 +30,10 @@ DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_OPENAI_IMAGE_MODEL = "gpt-image-2"
 DEFAULT_TRIPO_BASE_URL = "https://api.tripo3d.ai/v2/openapi"
 DEFAULT_BLENDER = r"C:\Program Files (x86)\Steam\steamapps\common\Blender\blender.exe"
-DEFAULT_TRIPO_MESH_FORWARD_AXIS = "POS_X"
+DEFAULT_TRIPO_MESH_FORWARD_AXIS = "AUTO"
+DEFAULT_GUIDE_INITIALIZER_CHECKPOINT = REPO_ROOT / "models" / "qwalk_guide_initializer" / "qwalk_guide_initializer.pt"
+MESH_FORWARD_AXIS_CHOICES = ("AUTO", "POS_X", "NEG_X", "POS_Y", "NEG_Y")
+LABEL_PROFILE_CHOICES = ("AUTO", "MEDIUM", "STOCKY", "HORSE", "SPRAWLING")
 MODEL_EXTENSIONS = (".glb", ".gltf", ".obj", ".fbx", ".zip")
 REFERENCE_VIEWS = ("front", "left", "right", "back")
 REFERENCE_STRATEGIES = ("sequential", "independent")
@@ -59,7 +62,7 @@ def parse_args() -> argparse.Namespace:
     init.add_argument(
         "--mesh-forward-axis",
         default=DEFAULT_TRIPO_MESH_FORWARD_AXIS,
-        choices=("POS_X", "NEG_X", "POS_Y", "NEG_Y"),
+        choices=MESH_FORWARD_AXIS_CHOICES,
     )
 
     init_batch = subparsers.add_parser("init-batch", help="Create N sample states from the prompt catalog.")
@@ -69,7 +72,7 @@ def parse_args() -> argparse.Namespace:
     init_batch.add_argument("--animal-type", default="", help="Optional catalog animal_type filter.")
     init_batch.add_argument("--armor-state", default="", choices=("", "armored", "unarmored"))
     init_batch.add_argument("--seed", type=int, default=0, help="Random seed. Defaults to current time.")
-    init_batch.add_argument("--mesh-forward-axis", default="", choices=("", "POS_X", "NEG_X", "POS_Y", "NEG_Y"))
+    init_batch.add_argument("--mesh-forward-axis", default="", choices=("", *MESH_FORWARD_AXIS_CHOICES))
 
     run_batch = subparsers.add_parser(
         "run-batch",
@@ -81,7 +84,7 @@ def parse_args() -> argparse.Namespace:
     run_batch.add_argument("--animal-type", default="", help="Optional catalog animal_type filter.")
     run_batch.add_argument("--armor-state", default="", choices=("", "armored", "unarmored"))
     run_batch.add_argument("--seed", type=int, default=0, help="Random seed. Defaults to current time.")
-    run_batch.add_argument("--mesh-forward-axis", default="", choices=("", "POS_X", "NEG_X", "POS_Y", "NEG_Y"))
+    run_batch.add_argument("--mesh-forward-axis", default="", choices=("", *MESH_FORWARD_AXIS_CHOICES))
     run_batch.add_argument("--openai-api-key", default="", help="OpenAI API key. Defaults to OPENAI_API_KEY.")
     run_batch.add_argument("--openai-base-url", default=DEFAULT_OPENAI_BASE_URL)
     run_batch.add_argument("--openai-model", default="", help=f"Defaults to catalog or {DEFAULT_OPENAI_IMAGE_MODEL}.")
@@ -113,7 +116,7 @@ def parse_args() -> argparse.Namespace:
     run_batch.add_argument("--no-download", action="store_true")
     run_batch.add_argument("--prepare-label-work", action="store_true")
     run_batch.add_argument("--blender", default=os.environ.get("BLENDER_EXE", DEFAULT_BLENDER))
-    run_batch.add_argument("--profile", default="", choices=("", "AUTO", "MEDIUM", "STOCKY", "HORSE"))
+    run_batch.add_argument("--profile", default="", choices=("", *LABEL_PROFILE_CHOICES))
     run_batch.add_argument("--resolution", type=int, default=1200)
     run_batch.add_argument("--no-join-meshes", action="store_true")
     run_batch.add_argument("--continue-on-error", action="store_true")
@@ -175,8 +178,15 @@ def parse_args() -> argparse.Namespace:
     prepare.add_argument("--sample-id", required=True)
     prepare.add_argument("--blender", default=os.environ.get("BLENDER_EXE", DEFAULT_BLENDER))
     prepare.add_argument("--model-file", default="", help="Override downloaded model file.")
-    prepare.add_argument("--profile", default="AUTO", choices=("AUTO", "MEDIUM", "STOCKY", "HORSE"))
-    prepare.add_argument("--mesh-forward-axis", default="", choices=("", "POS_X", "NEG_X", "POS_Y", "NEG_Y"))
+    prepare.add_argument("--profile", default="AUTO", choices=LABEL_PROFILE_CHOICES)
+    prepare.add_argument("--mesh-forward-axis", default="", choices=("", *MESH_FORWARD_AXIS_CHOICES))
+    prepare.add_argument(
+        "--guide-initializer-checkpoint",
+        default=str(DEFAULT_GUIDE_INITIALIZER_CHECKPOINT),
+        help="Use a trained guide initializer checkpoint when present; falls back to geometry if missing.",
+    )
+    prepare.add_argument("--min-learned-guide-samples", type=int, default=8)
+    prepare.add_argument("--no-learned-guide", action="store_true", help="Always use the geometric mesh fitter.")
     prepare.add_argument("--resolution", type=int, default=1200)
     prepare.add_argument("--no-join-meshes", action="store_true")
 
@@ -267,6 +277,25 @@ def skeleton_schema_id_for_body_plan(catalog: dict[str, Any], body_plan: str) ->
         return ""
     normalized_body_plan = LEGACY_BODY_PLAN_ALIASES.get(str(body_plan or "").strip(), str(body_plan or "").strip())
     return str(mapping.get(normalized_body_plan, "") or "").strip()
+
+
+def label_profile_for_body_plan(body_plan: str) -> str:
+    normalized = LEGACY_BODY_PLAN_ALIASES.get(str(body_plan or "").strip(), str(body_plan or "").strip())
+    if normalized in {"low_reptile", "shell_reptile"}:
+        return "SPRAWLING"
+    if normalized == "long_legged_ungulate":
+        return "HORSE"
+    return "AUTO"
+
+
+def label_profile_for_state(state: dict[str, Any], requested: str = "") -> str:
+    requested = str(requested or "").strip().upper()
+    if requested and requested != "AUTO":
+        return requested
+    explicit = str(state.get("label_profile") or "").strip().upper()
+    if explicit and explicit != "AUTO":
+        return explicit
+    return label_profile_for_body_plan(str(state.get("body_plan") or state.get("morphology_type") or ""))
 
 
 def select_prompt_spec(
@@ -791,6 +820,23 @@ def require_created_file(path: Path, label: str) -> None:
         raise RuntimeError(f"{label} was not created: {path}")
 
 
+def checkpoint_real_sample_count(path: Path) -> int:
+    if not path.exists():
+        return 0
+    try:
+        import torch
+    except ImportError:
+        return 0
+    try:
+        checkpoint = torch.load(path, map_location="cpu", weights_only=False)
+    except Exception:
+        return 0
+    try:
+        return int(checkpoint.get("real_sample_count", 0))
+    except (TypeError, ValueError):
+        return 0
+
+
 def create_batch_states(
     *,
     work_root: str | Path,
@@ -822,18 +868,20 @@ def create_batch_states(
         resolved_mesh_forward_axis = mesh_forward_axis or spec.get(
             "mesh_forward_axis", DEFAULT_TRIPO_MESH_FORWARD_AXIS
         )
+        body_plan = spec.get("body_plan", spec["morphology_type"])
+        label_profile = spec.get("label_profile") or label_profile_for_body_plan(body_plan)
         state = {
             "sample_id": sample_id,
             "prompt": spec.get("animal_description", ""),
             "animal_type": spec["animal_type"],
             "morphology_type": spec["morphology_type"],
-            "body_plan": spec.get("body_plan", spec["morphology_type"]),
+            "body_plan": body_plan,
             "skeleton_schema_id": spec.get("skeleton_schema_id", "")
             or skeleton_schema_id_for_body_plan(catalog, spec.get("body_plan", spec["morphology_type"])),
             "variant_tags": spec.get("variant_tags", []),
             "armor_state": spec.get("armor_state", "unarmored"),
             "mesh_forward_axis": resolved_mesh_forward_axis,
-            "label_profile": spec.get("label_profile", "AUTO"),
+            "label_profile": label_profile,
             "reference_prompt_catalog": str(Path(catalog_path).expanduser().resolve()),
             "reference_prompt_spec_id": spec.get("id", ""),
             "reference_prompt_spec": spec,
@@ -860,6 +908,7 @@ def command_init_sample(args: argparse.Namespace) -> None:
         "skeleton_schema_id": skeleton_schema_id_for_body_plan(catalog, args.morphology_type),
         "variant_tags": [],
         "mesh_forward_axis": args.mesh_forward_axis,
+        "label_profile": label_profile_for_body_plan(args.morphology_type),
         "status": "initialized",
         "created_at": int(time.time()),
     }
@@ -996,7 +1045,7 @@ def command_run_batch(args: argparse.Namespace) -> None:
 
             if args.prepare_label_work:
                 latest_state = load_state(args.work_root, sample_id)
-                profile = args.profile or latest_state.get("label_profile", "AUTO")
+                profile = label_profile_for_state(latest_state, args.profile)
                 command_prepare_label_work(
                     argparse.Namespace(
                         work_root=args.work_root,
@@ -1005,6 +1054,9 @@ def command_run_batch(args: argparse.Namespace) -> None:
                         model_file="",
                         profile=profile,
                         mesh_forward_axis="",
+                        guide_initializer_checkpoint=str(DEFAULT_GUIDE_INITIALIZER_CHECKPOINT),
+                        min_learned_guide_samples=8,
+                        no_learned_guide=False,
                         resolution=args.resolution,
                         no_join_meshes=args.no_join_meshes,
                     )
@@ -1213,8 +1265,20 @@ def command_prepare_label_work(args: argparse.Namespace) -> None:
     source_blend = directory / f"{args.sample_id}_imported.blend"
     label_blend = directory / f"{args.sample_id}_label_work.blend"
     review_dir = directory / "review_candidate"
-    source_axis = args.mesh_forward_axis or state.get("mesh_forward_axis", DEFAULT_TRIPO_MESH_FORWARD_AXIS)
+    prediction_obj = directory / f"{args.sample_id}_canonical_mesh.obj"
+    prediction_json = directory / f"{args.sample_id}_guide_prediction.json"
+    source_axis = (
+        args.mesh_forward_axis
+        or state.get("source_mesh_forward_axis")
+        or state.get("mesh_forward_axis")
+        or DEFAULT_TRIPO_MESH_FORWARD_AXIS
+    )
     canonical_axis = "POS_Y"
+    label_profile = label_profile_for_state(state, args.profile)
+    guide_source = "geometric_mesh_sampler"
+    guide_source_note = ""
+    checkpoint_path = Path(args.guide_initializer_checkpoint).expanduser().resolve()
+    checkpoint_sample_count = checkpoint_real_sample_count(checkpoint_path)
 
     run(
         [
@@ -1236,27 +1300,94 @@ def command_prepare_label_work(args: argparse.Namespace) -> None:
         ]
     )
     require_created_file(source_blend, "Imported Blender file")
-    run(
-        [
-            blender,
-            "--background",
-            str(source_blend),
-            "--python",
-            str(REPO_ROOT / "scripts" / "apply_qwalk_geometric_to_blend.py"),
-            "--",
-            "--mesh",
-            mesh_name,
-            "--output",
-            str(label_blend),
-            "--guides-only",
-            "--profile",
-            args.profile,
-            "--mesh-forward-axis",
-            canonical_axis,
-        ]
-    )
+    if args.no_learned_guide:
+        guide_source_note = "learned guide disabled"
+    elif not checkpoint_path.exists():
+        guide_source_note = "learned guide checkpoint missing"
+    elif checkpoint_sample_count < max(0, args.min_learned_guide_samples):
+        guide_source_note = (
+            f"learned guide checkpoint has {checkpoint_sample_count} verified sample(s); "
+            f"needs {args.min_learned_guide_samples}"
+        )
+    else:
+        try:
+            run(
+                [
+                    blender,
+                    "--background",
+                    str(source_blend),
+                    "--python",
+                    str(REPO_ROOT / "scripts" / "export_blend_mesh_obj.py"),
+                    "--",
+                    "--mesh",
+                    mesh_name,
+                    "--out",
+                    str(prediction_obj),
+                ]
+            )
+            run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "scripts" / "predict_guide_initializer.py"),
+                    str(prediction_obj),
+                    "--checkpoint",
+                    str(checkpoint_path),
+                    "--out",
+                    str(prediction_json),
+                    "--mesh-forward-axis",
+                    canonical_axis,
+                    "--device",
+                    "auto",
+                ]
+            )
+            run(
+                [
+                    blender,
+                    "--background",
+                    str(source_blend),
+                    "--python",
+                    str(REPO_ROOT / "scripts" / "apply_qwalk_prediction_to_blend.py"),
+                    "--",
+                    str(prediction_json),
+                    "--mesh",
+                    mesh_name,
+                    "--output",
+                    str(label_blend),
+                    "--guides-only",
+                ]
+            )
+            guide_source = "learned_guide_initializer"
+            guide_source_note = f"learned checkpoint trained on {checkpoint_sample_count} verified sample(s)"
+        except subprocess.CalledProcessError as error:
+            guide_source_note = f"learned guide initializer failed; falling back to geometry: {error}"
+            print(guide_source_note)
+
+    if guide_source == "geometric_mesh_sampler":
+        run(
+            [
+                blender,
+                "--background",
+                str(source_blend),
+                "--python",
+                str(REPO_ROOT / "scripts" / "apply_qwalk_geometric_to_blend.py"),
+                "--",
+                "--mesh",
+                mesh_name,
+                "--output",
+                str(label_blend),
+                "--guides-only",
+                "--profile",
+                label_profile,
+                "--mesh-forward-axis",
+                canonical_axis,
+            ]
+        )
     require_created_file(label_blend, "Label-work Blender file")
-    guide_name = f"{mesh_name}_QWalk_Geometric_Guides"
+    guide_name = (
+        f"{prediction_obj.stem}_Predicted_Guides"
+        if guide_source == "learned_guide_initializer"
+        else f"{mesh_name}_QWalk_Geometric_Guides"
+    )
     run(
         [
             blender,
@@ -1292,7 +1423,12 @@ def command_prepare_label_work(args: argparse.Namespace) -> None:
             "source_mesh_forward_axis": source_axis,
             "mesh_forward_axis": canonical_axis,
             "mesh_orientation_standardized": True,
-            "label_profile": args.profile,
+            "label_profile": label_profile,
+            "guide_initializer_source": guide_source,
+            "guide_initializer_note": guide_source_note,
+            "guide_initializer_checkpoint": str(checkpoint_path) if checkpoint_path.exists() else "",
+            "guide_initializer_real_sample_count": checkpoint_sample_count,
+            "guide_prediction_json": str(prediction_json) if prediction_json.exists() else "",
             "review_dir": str(review_dir),
             "status": "candidate_review_rendered",
             "updated_at": int(time.time()),

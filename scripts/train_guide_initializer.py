@@ -490,6 +490,9 @@ def train(args: argparse.Namespace) -> dict[str, float]:
     model.load_state_dict(checkpoint["model_state"])
     test_metrics = evaluate(model, test_loader, device, args.animal_weight, args.morphology_weight)
     metrics = {
+        "real_sample_count": len(train_samples),
+        "val_sample_count": len(val_samples),
+        "test_sample_count": len(test_samples),
         "best_val_epoch": checkpoint["epoch"],
         **{f"best_val_{key}": value for key, value in best_metrics.items()},
         **{f"test_{key}": value for key, value in test_metrics.items()},
