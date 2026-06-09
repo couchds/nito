@@ -1,14 +1,14 @@
 {
   "source": "real_qwalk_batch_labels",
   "batch_id": "manual_training_set",
-  "count": 2,
-  "verified_count": 2,
+  "count": 3,
+  "verified_count": 3,
   "animal_counts": {
-    "unknown": 1,
+    "unknown": 2,
     "turtle": 1
   },
   "split_counts": {
-    "train": 2
+    "train": 3
   },
   "label_schema": {
     "animal_type": [

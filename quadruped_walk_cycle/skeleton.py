@@ -946,6 +946,14 @@ def resolve_mesh_forward_axis(mesh_object, points, requested_axis, fit_amount, r
     metadata_axis = mesh_metadata_forward_axis(mesh_object, requested_axis)
     if metadata_axis:
         return metadata_axis
+    if requested_axis == "AUTO" and points:
+        _, _, size = robust_bounds_from_points(
+            points,
+            robust=robust,
+            top_percentile=top_percentile,
+        )
+        if size.x > size.y * 1.2:
+            return "POS_X"
     return resolve_fit_forward_axis(
         points,
         requested_axis,
@@ -2220,7 +2228,7 @@ class QWG_OT_create_fit_guides(Operator):
     )
     use_learned_initializer: BoolProperty(
         name="Use Trained Model",
-        description="Use the trained guide initializer checkpoint for initial guide placement when available",
+        description="Use the trained guide initializer checkpoint for initial guide placement",
         default=True,
     )
     learned_checkpoint: StringProperty(
@@ -2275,7 +2283,8 @@ class QWG_OT_create_fit_guides(Operator):
                 )
                 return {"FINISHED"}
             except Exception as error:
-                self.report({"WARNING"}, f"Trained guide initializer unavailable; using geometric fit. {error}")
+                self.report({"ERROR"}, f"Trained guide initializer failed: {error}")
+                return {"CANCELLED"}
 
         fit_points, angle = rotate_points_in_fit_space(world_points, resolved_forward_axis)
         _, _, mesh_size = robust_bounds_from_points(
