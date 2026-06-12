@@ -1,8 +1,16 @@
 import bpy
+import importlib
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
 from bpy.props import BoolProperty, EnumProperty, FloatProperty, StringProperty
 from bpy.types import Operator
 from math import cos, pi, sin
 from mathutils import Matrix, Vector
+from pathlib import Path
 
 from .constants import FK_FIELDS, IK_FIELDS, LEG_ORDER
 from .rig_utils import store_base_pose
@@ -78,6 +86,9 @@ MESH_FORWARD_AXIS_ITEMS = (
     ("POS_X", "+X", "Mesh faces toward positive X"),
     ("NEG_X", "-X", "Mesh faces toward negative X"),
 )
+EXPLICIT_MESH_FORWARD_AXES = {"POS_Y", "NEG_Y", "POS_X", "NEG_X"}
+REPO_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_GUIDE_INITIALIZER_CHECKPOINT = REPO_ROOT / "models" / "qwalk_guide_initializer" / "qwalk_guide_initializer.pt"
 
 QUADRUPED_PROFILES = {
     "MEDIUM": {
@@ -203,6 +214,47 @@ QUADRUPED_PROFILES = {
         },
         "control_scale": 1.15,
     },
+    "SPRAWLING": {
+        "label": "Sprawling Quadruped",
+        "root": {"head": (-0.30, 0.0, 0.0), "tail": (0.30, 0.0, 0.0)},
+        "body": {"head": (0.0, -0.82, 0.72), "tail": (0.0, 0.74, 0.78)},
+        "spine": [
+            ("pelvis", (0.0, -0.82, 0.68), (0.0, -0.38, 0.72)),
+            ("spine_01", (0.0, -0.38, 0.72), (0.0, 0.16, 0.75)),
+            ("chest", (0.0, 0.16, 0.75), (0.0, 0.78, 0.76)),
+        ],
+        "neck": {"head": (0.0, 0.78, 0.76), "tail": (0.0, 1.06, 0.80)},
+        "head": {"head": (0.0, 1.06, 0.80), "tail": (0.0, 1.34, 0.74)},
+        "tail": [
+            ("tail_01", (0.0, -0.82, 0.68), (0.0, -1.02, 0.66)),
+            ("tail_02", (0.0, -1.02, 0.66), (0.0, -1.20, 0.60)),
+        ],
+        "leg_width_front": 0.30,
+        "leg_width_rear": 0.32,
+        "front_leg": {
+            "anchor_parent": "chest",
+            "guide": "scapula",
+            "guide_head": (0.00, 0.56, 0.74),
+            "guide_tail": (0.08, 0.48, 0.50),
+            "upper_head": (0.08, 0.48, 0.50),
+            "upper_tail": (0.20, 0.44, 0.30),
+            "lower_tail": (0.30, 0.52, 0.13),
+            "foot_tail": (0.36, 0.70, 0.05),
+            "pole": (0.48, 0.24, 0.28),
+        },
+        "rear_leg": {
+            "anchor_parent": "pelvis",
+            "guide": "hip",
+            "guide_head": (0.00, -0.70, 0.68),
+            "guide_tail": (0.08, -0.74, 0.46),
+            "upper_head": (0.08, -0.74, 0.46),
+            "upper_tail": (0.20, -0.64, 0.28),
+            "lower_tail": (0.30, -0.50, 0.13),
+            "foot_tail": (0.36, -0.32, 0.05),
+            "pole": (0.48, -0.88, 0.26),
+        },
+        "control_scale": 0.9,
+    },
 }
 
 
@@ -213,7 +265,8 @@ def scaled(point, scale):
 
 def mirrored_point(point, x):
     """Return a profile point with an assigned X coordinate."""
-    return (x, point[1], point[2])
+    side = 1.0 if x >= 0.0 else -1.0
+    return (x + side * point[0], point[1], point[2])
 
 
 def profile_items():
@@ -312,16 +365,124 @@ def percentile(values, amount):
 
 
 def mesh_world_points(mesh_object, context):
-    """Return evaluated mesh vertices in world space."""
+    """Return evaluated mesh vertices and face samples in world space."""
     depsgraph = context.evaluated_depsgraph_get()
     evaluated = mesh_object.evaluated_get(depsgraph)
     mesh = evaluated.to_mesh()
     try:
         if mesh and mesh.vertices:
-            return [evaluated.matrix_world @ vertex.co for vertex in mesh.vertices]
+            matrix = evaluated.matrix_world
+            points = [matrix @ vertex.co for vertex in mesh.vertices]
+            polygons = getattr(mesh, "polygons", None)
+            if polygons:
+                face_step = max(1, len(polygons) // 2400)
+                for index in range(0, len(polygons), face_step):
+                    polygon = polygons[index]
+                    points.append(matrix @ polygon.center)
+                    if len(polygon.vertices) >= 3:
+                        vertices = [mesh.vertices[index].co for index in polygon.vertices]
+                        points.append(matrix @ ((vertices[0] + vertices[1] + vertices[2]) / 3.0))
+            return points
     finally:
         evaluated.to_mesh_clear()
     return [mesh_object.matrix_world @ Vector(corner) for corner in mesh_object.bound_box]
+
+
+def external_python_executable():
+    """Return a Python executable that can run the repo's training scripts."""
+    candidates = [
+        os.environ.get("NITO_PYTHON", ""),
+        shutil.which("python") or "",
+        shutil.which("py") or "",
+        r"C:\Python314\python.exe",
+    ]
+    for candidate in candidates:
+        if not candidate:
+            continue
+        if candidate == sys.executable and Path(candidate).name.lower().startswith("blender"):
+            continue
+        if candidate == "py" or Path(candidate).exists():
+            return candidate
+    return ""
+
+
+def export_mesh_world_obj(mesh_object, context, out_path):
+    """Export one mesh object's evaluated world-space geometry to OBJ."""
+    depsgraph = context.evaluated_depsgraph_get()
+    evaluated = mesh_object.evaluated_get(depsgraph)
+    mesh = evaluated.to_mesh()
+    try:
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        with out_path.open("w", encoding="utf-8") as handle:
+            handle.write(f"# Nito guide initializer mesh export: {mesh_object.name}\n")
+            for vertex in mesh.vertices:
+                point = evaluated.matrix_world @ vertex.co
+                handle.write(f"v {point.x:.6f} {point.y:.6f} {point.z:.6f}\n")
+            for polygon in mesh.polygons:
+                indices = " ".join(str(index + 1) for index in polygon.vertices)
+                handle.write(f"f {indices}\n")
+    finally:
+        evaluated.to_mesh_clear()
+
+
+def profile_key_for_morphology(morphology):
+    """Map learned morphology labels to Nito guide profile keys."""
+    normalized = str(morphology or "").strip().lower()
+    if normalized in {"low_reptile", "shell_reptile"}:
+        return "SPRAWLING"
+    if normalized == "long_legged_ungulate":
+        return "HORSE"
+    if normalized == "stocky_quadruped":
+        return "STOCKY"
+    return "MEDIUM"
+
+
+def create_learned_guide_from_mesh(context, mesh_object, guide_name, mesh_forward_axis, checkpoint_path):
+    """Create a Nito guide by running the trained guide initializer externally."""
+    checkpoint = Path(checkpoint_path).expanduser().resolve()
+    if not checkpoint.exists():
+        raise FileNotFoundError(f"Guide initializer checkpoint not found: {checkpoint}")
+    python_exe = external_python_executable()
+    if not python_exe:
+        raise RuntimeError("Could not find external Python for the trained guide initializer.")
+
+    with tempfile.TemporaryDirectory(prefix="nito_guide_") as temp_dir:
+        temp_root = Path(temp_dir)
+        obj_path = temp_root / f"{mesh_object.name}_nito_input.obj"
+        prediction_path = temp_root / f"{mesh_object.name}_nito_prediction.json"
+        export_mesh_world_obj(mesh_object, context, obj_path)
+        command = [
+            python_exe,
+            str(REPO_ROOT / "scripts" / "predict_guide_initializer.py"),
+            str(obj_path),
+            "--checkpoint",
+            str(checkpoint),
+            "--out",
+            str(prediction_path),
+            "--mesh-forward-axis",
+            mesh_forward_axis,
+            "--device",
+            "auto",
+        ]
+        subprocess.run(command, cwd=str(REPO_ROOT), check=True)
+        metadata = json.loads(prediction_path.read_text(encoding="utf-8"))
+
+        scripts_path = str(REPO_ROOT / "scripts")
+        if scripts_path not in sys.path:
+            sys.path.insert(0, scripts_path)
+        importer = importlib.import_module("import_synthetic_quadruped_sample")
+        guide = importer.create_guide_armature(prediction_path, metadata)
+        guide.name = guide_name
+        guide.data.name = f"{guide_name}_Data"
+        guide["qwg_source_mesh"] = mesh_object.name
+        guide["qwg_fit_forward_axis"] = metadata.get("mesh_forward_axis", mesh_forward_axis)
+        guide["qwg_profile"] = profile_key_for_morphology(metadata.get("predicted_morphology_type", ""))
+        guide["qwg_ml_predicted_morphology_type"] = metadata.get("predicted_morphology_type", "")
+        guide["qwg_ml_predicted_animal_type"] = metadata.get("predicted_animal_type", "")
+        guide["qwg_ml_prediction"] = True
+        guide["qwg_ml_checkpoint"] = str(checkpoint)
+        guide["qwg_synthetic_label"] = ""
+        return guide, metadata
 
 
 def mesh_world_bounds(mesh_object, context, robust=True, top_percentile=88.0):
@@ -488,6 +649,24 @@ def measured_leg_levels(points, foot_y, radius, ground_z, body_low_z, fallback_u
     return percentile(zs, 68.0), percentile(zs, 32.0)
 
 
+def contact_landmark(points, fallback_y, fallback_x_offset, x_center, y_min, y_max, ground_z, height):
+    """Return a foot/contact landmark from low mesh samples in a Y range."""
+    contact_z = ground_z + height * 0.22
+    candidates = [
+        point
+        for point in points
+        if y_min <= point.y <= y_max and point.z <= contact_z
+    ]
+    if len(candidates) < 5:
+        return fallback_y, fallback_x_offset
+
+    y_values = [point.y for point in candidates]
+    x_offsets = [abs(point.x - x_center) for point in candidates]
+    y_center = percentile(y_values, 50.0)
+    x_offset = max(percentile(x_offsets, 72.0), fallback_x_offset * 0.65)
+    return y_center, x_offset
+
+
 def build_landmark_profile(points, profile_key, fit_amount, robust=True, top_percentile=88.0):
     """Build a temporary profile from mesh-derived body and foot landmarks."""
     local_min, local_max, local_size = robust_bounds_from_points(points, robust, top_percentile)
@@ -541,6 +720,7 @@ def build_landmark_profile(points, profile_key, fit_amount, robust=True, top_per
     spine_z = measured_back_z(spine_points, spine_a_y, slice_radius, fallback_spine_z)
     mid_spine_z = measured_back_z(spine_points, spine_b_y, slice_radius, fallback_spine_z)
     chest_z = measured_back_z(spine_points, chest_y, slice_radius, fallback_spine_z)
+    x_center = (local_min.x + local_max.x) * 0.5
 
     low_points = [
         point
@@ -562,12 +742,36 @@ def build_landmark_profile(points, profile_key, fit_amount, robust=True, top_per
 
     full_tail_y = inset(local_min.y, body_center_y, min(fit_amount, 1.15))
     full_head_y = inset(local_max.y, body_center_y, min(fit_amount, 1.15))
-    x_center = (local_min.x + local_max.x) * 0.5
     low_offsets = [abs(point.x - x_center) for point in low_points]
     if low_offsets:
         leg_width = max(percentile(low_offsets, 76.0) * fit_amount, height * 0.055)
     else:
         leg_width = max(width * 0.28 * fit_amount, height * 0.055)
+    rear_foot_y, rear_foot_x = contact_landmark(
+        points,
+        rear_foot_y,
+        leg_width,
+        x_center,
+        local_min.y + length * 0.06,
+        body_center_y - body_length * 0.04,
+        ground_z,
+        height,
+    )
+    front_foot_y, front_foot_x = contact_landmark(
+        points,
+        front_foot_y,
+        leg_width,
+        x_center,
+        body_center_y + body_length * 0.04,
+        local_max.y - length * 0.06,
+        ground_z,
+        height,
+    )
+    rear_foot_y = inset(clamp(rear_foot_y, local_min.y + length * 0.08, body_center_y - body_length * 0.08), body_center_y, fit_amount)
+    front_foot_y = inset(clamp(front_foot_y, body_center_y + body_length * 0.08, local_max.y - length * 0.08), body_center_y, fit_amount)
+    leg_width_front = max(front_foot_x * fit_amount, height * 0.055)
+    leg_width_rear = max(rear_foot_x * fit_amount, height * 0.055)
+    leg_width = max(leg_width_front, leg_width_rear)
     root_width = max(width * 0.34, height * 0.08)
     foot_z = ground_z + height * 0.035
 
@@ -603,6 +807,20 @@ def build_landmark_profile(points, profile_key, fit_amount, robust=True, top_per
         body_length,
         origin,
     )
+    if profile_key == "SPRAWLING":
+        def with_x(point, x_value):
+            return (x_value, point[1], point[2])
+
+        for leg_profile, sampled_width in ((front_leg, leg_width_front), (rear_leg, leg_width_rear)):
+            sprawl_offset = max(sampled_width * 0.28, height * 0.08)
+            foot_offset = max(sampled_width * 0.58, height * 0.14)
+            leg_profile["guide_head"] = with_x(leg_profile["guide_head"], 0.0)
+            leg_profile["guide_tail"] = with_x(leg_profile["guide_tail"], sprawl_offset * 0.45)
+            leg_profile["upper_head"] = with_x(leg_profile["upper_head"], sprawl_offset * 0.45)
+            leg_profile["upper_tail"] = with_x(leg_profile["upper_tail"], sprawl_offset)
+            leg_profile["lower_tail"] = with_x(leg_profile["lower_tail"], foot_offset * 0.82)
+            leg_profile["foot_tail"] = with_x(leg_profile["foot_tail"], foot_offset)
+            leg_profile["pole"] = with_x(leg_profile["pole"], foot_offset * 1.15)
 
     label = QUADRUPED_PROFILES.get(profile_key, QUADRUPED_PROFILES["MEDIUM"])["label"]
     profile = {
@@ -628,8 +846,8 @@ def build_landmark_profile(points, profile_key, fit_amount, robust=True, top_per
                 rel(x_center, body_y_min - max((body_y_min - full_tail_y) * 0.82, body_length * 0.14), pelvis_z - height * 0.06),
             ),
         ],
-        "leg_width_front": leg_width,
-        "leg_width_rear": leg_width,
+        "leg_width_front": leg_width_front,
+        "leg_width_rear": leg_width_rear,
         "front_leg": front_leg,
         "rear_leg": rear_leg,
         "control_scale": max(height, length * 0.35),
@@ -703,6 +921,46 @@ def resolve_fit_forward_axis(points, requested_axis, fit_amount, robust=True, to
 
     candidates.sort(reverse=True)
     return candidates[0][1]
+
+
+def mesh_metadata_forward_axis(mesh_object, requested_axis):
+    """Return mesh-stored forward axis metadata when AUTO can trust it."""
+    if requested_axis != "AUTO":
+        return requested_axis
+
+    standardized = bool(mesh_object.get("qwalk_orientation_standardized", False))
+    canonical_axis = str(mesh_object.get("qwalk_canonical_forward_axis", "")).upper()
+    source_axis = str(mesh_object.get("qwalk_source_forward_axis", "")).upper()
+
+    if standardized and canonical_axis in EXPLICIT_MESH_FORWARD_AXES:
+        return canonical_axis
+    if not standardized and source_axis in EXPLICIT_MESH_FORWARD_AXES:
+        return source_axis
+    if canonical_axis in EXPLICIT_MESH_FORWARD_AXES:
+        return canonical_axis
+    return ""
+
+
+def resolve_mesh_forward_axis(mesh_object, points, requested_axis, fit_amount, robust=True, top_percentile=88.0):
+    """Resolve a mesh forward axis, preferring Nito import metadata over silhouette guesses."""
+    metadata_axis = mesh_metadata_forward_axis(mesh_object, requested_axis)
+    if metadata_axis:
+        return metadata_axis
+    if requested_axis == "AUTO" and points:
+        _, _, size = robust_bounds_from_points(
+            points,
+            robust=robust,
+            top_percentile=top_percentile,
+        )
+        if size.x > size.y * 1.2:
+            return "POS_X"
+    return resolve_fit_forward_axis(
+        points,
+        requested_axis,
+        fit_amount,
+        robust=robust,
+        top_percentile=top_percentile,
+    )
 
 
 def active_mesh(context):
@@ -1872,7 +2130,8 @@ class QWG_OT_create_fitted_quadruped_armature(Operator):
             return {"CANCELLED"}
 
         world_points = mesh_world_points(mesh_object, context)
-        resolved_forward_axis = resolve_fit_forward_axis(
+        resolved_forward_axis = resolve_mesh_forward_axis(
+            mesh_object,
             world_points,
             self.mesh_forward_axis,
             self.fit_amount,
@@ -1967,6 +2226,16 @@ class QWG_OT_create_fit_guides(Operator):
         min=60.0,
         max=100.0,
     )
+    use_learned_initializer: BoolProperty(
+        name="Use Trained Model",
+        description="Use the trained guide initializer checkpoint for initial guide placement",
+        default=True,
+    )
+    learned_checkpoint: StringProperty(
+        name="Guide Model",
+        description="Path to qwalk_guide_initializer.pt",
+        default=str(DEFAULT_GUIDE_INITIALIZER_CHECKPOINT),
+    )
 
     @classmethod
     def poll(cls, context):
@@ -1981,13 +2250,42 @@ class QWG_OT_create_fit_guides(Operator):
             return {"CANCELLED"}
 
         world_points = mesh_world_points(mesh_object, context)
-        resolved_forward_axis = resolve_fit_forward_axis(
+        resolved_forward_axis = resolve_mesh_forward_axis(
+            mesh_object,
             world_points,
             self.mesh_forward_axis,
             self.fit_amount,
             robust=self.robust_bounds,
             top_percentile=self.top_percentile,
         )
+        guide_name = self.guide_name.strip() or f"{mesh_object.name}_Nito_Guide"
+        if self.use_learned_initializer:
+            try:
+                guide, metadata = create_learned_guide_from_mesh(
+                    context,
+                    mesh_object,
+                    guide_name,
+                    resolved_forward_axis,
+                    self.learned_checkpoint,
+                )
+                bpy.ops.object.select_all(action="DESELECT")
+                guide.select_set(True)
+                context.view_layer.objects.active = guide
+                confidence = metadata.get("predicted_morphology_confidence", 0.0)
+                self.report(
+                    {"INFO"},
+                    "Created learned Nito guide for {mesh} using {axis} ({morphology}, {confidence:.2f}).".format(
+                        mesh=mesh_object.name,
+                        axis=resolved_forward_axis,
+                        morphology=metadata.get("predicted_morphology_type", "unknown"),
+                        confidence=float(confidence or 0.0),
+                    ),
+                )
+                return {"FINISHED"}
+            except Exception as error:
+                self.report({"ERROR"}, f"Trained guide initializer failed: {error}")
+                return {"CANCELLED"}
+
         fit_points, angle = rotate_points_in_fit_space(world_points, resolved_forward_axis)
         _, _, mesh_size = robust_bounds_from_points(
             fit_points,
@@ -2003,7 +2301,6 @@ class QWG_OT_create_fit_guides(Operator):
             top_percentile=self.top_percentile,
         )
 
-        guide_name = self.guide_name.strip() or f"{mesh_object.name}_Nito_Guide"
         guide = create_guide_armature(
             context,
             guide_name,

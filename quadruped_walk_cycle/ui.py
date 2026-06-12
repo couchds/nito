@@ -229,9 +229,23 @@ class QWG_PT_panel(Panel):
         guide_box.label(text="Nito Guide", icon="EMPTY_AXIS")
         guide_box.label(text="Place this guide for training labels.")
 
-        guide_row = guide_box.row()
-        guide_row.enabled = has_mesh
-        guide_row.operator("qwg.create_fit_guides", text="Create Nito Guide", icon="EMPTY_AXIS")
+        guide_model_row = guide_box.row()
+        guide_model_row.enabled = has_mesh
+        guide_model_op = guide_model_row.operator(
+            "qwg.create_fit_guides",
+            text="Generate Nito Guide from Model",
+            icon="OUTLINER_DATA_ARMATURE",
+        )
+        guide_model_op.use_learned_initializer = True
+
+        guide_sampler_row = guide_box.row()
+        guide_sampler_row.enabled = has_mesh
+        guide_sampler_op = guide_sampler_row.operator(
+            "qwg.create_fit_guides",
+            text="Generate Nito Guide from Sampler",
+            icon="EMPTY_AXIS",
+        )
+        guide_sampler_op.use_learned_initializer = False
 
         guide_build_row = guide_box.row()
         guide_build_row.enabled = has_guide

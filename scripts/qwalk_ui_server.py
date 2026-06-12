@@ -8,6 +8,7 @@ import json
 import mimetypes
 import os
 import random
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -35,6 +36,8 @@ MODEL_EXTENSIONS = {".glb", ".gltf"}
 REFERENCE_ORDER = ("front", "left", "right", "back")
 REVIEW_ORDER = ("front", "left", "right", "rear", "top", "quarter")
 LABEL_SPLITS = ("train", "val", "test")
+MESH_FORWARD_AXIS_CHOICES = {"AUTO", "POS_X", "NEG_X", "POS_Y", "NEG_Y"}
+LABEL_PROFILE_CHOICES = {"AUTO", "MEDIUM", "STOCKY", "HORSE", "SPRAWLING"}
 STALE_JOB_SECONDS = 15 * 60
 DEFAULT_COMMAND_TIMEOUT_SECONDS = 30 * 60
 COMMAND_TIMEOUT_SECONDS = {
@@ -44,6 +47,7 @@ COMMAND_TIMEOUT_SECONDS = {
     "prepare-label-work": 15 * 60,
     "export-verified": 15 * 60,
     "run-batch": 60 * 60,
+    "train-guide-initializer": 12 * 60 * 60,
 }
 RUNNING_SAMPLE_STATUS_SUFFIXES = ("running", "polling")
 SAMPLE_ACTION_STATUS = {
@@ -150,6 +154,30 @@ def skeleton_schema_id_for_body_plan(label_schema: dict[str, Any], body_plan: st
     normalized_body_plan = LEGACY_BODY_PLAN_ALIASES.get(str(body_plan or "").strip(), str(body_plan or "").strip())
     schema_id = mapping.get(normalized_body_plan, "")
     return str(schema_id or "").strip()
+
+
+def label_profile_for_body_plan(body_plan: str) -> str:
+    normalized = LEGACY_BODY_PLAN_ALIASES.get(str(body_plan or "").strip(), str(body_plan or "").strip())
+    if normalized in {"low_reptile", "shell_reptile"}:
+        return "SPRAWLING"
+    if normalized == "long_legged_ungulate":
+        return "HORSE"
+    return "AUTO"
+
+
+def label_profile_for_state(state: dict[str, Any]) -> str:
+    explicit = str(state.get("label_profile") or "").strip().upper()
+    if explicit and explicit != "AUTO" and explicit in LABEL_PROFILE_CHOICES:
+        return explicit
+    return label_profile_for_body_plan(body_plan_value(state))
+
+
+def mesh_forward_axis_for_state(state: dict[str, Any]) -> str:
+    for key in ("source_mesh_forward_axis", "mesh_forward_axis"):
+        axis = str(state.get(key) or "").strip().upper()
+        if axis in MESH_FORWARD_AXIS_CHOICES:
+            return axis
+    return "AUTO"
 
 
 def is_page_route(path: str) -> bool:
@@ -588,6 +616,103 @@ class WorkflowStore:
                 unique.append(sample_id)
         return unique
 
+    def batch_path_for_id(self, batch_id_value: str) -> tuple[str, Path]:
+        batch_id = safe_token(batch_id_value, "")
+        if not batch_id or batch_id != batch_id_value:
+            raise ValueError("Invalid batch id.")
+        return batch_id, self.work_root / "batch_runs" / f"{batch_id}.json"
+
+    def add_sample_to_batch(self, sample_id_value: str, payload: dict[str, Any]) -> dict[str, Any]:
+        sample_id = safe_token(sample_id_value, "")
+        if not sample_id or sample_id != sample_id_value:
+            raise ValueError("Invalid sample id.")
+        state_file = self.work_root / sample_id / "workflow_state.json"
+        if not state_file.exists():
+            raise ValueError(f"Sample not found: {sample_id}")
+
+        now = int(time.time())
+        batch_dir = self.work_root / "batch_runs"
+        batch_dir.mkdir(parents=True, exist_ok=True)
+        requested_id = str(payload.get("batchId") or "").strip()
+        create_new = bool(payload.get("createNew"))
+        if create_new or not requested_id:
+            requested_id = safe_token(payload.get("newBatchId"), "")
+            if not requested_id:
+                requested_id = f"manual_{now}_{uuid.uuid4().hex[:6]}"
+        batch_id = safe_token(requested_id, "")
+        if not batch_id or batch_id != requested_id:
+            raise ValueError("Batch id may only contain letters, numbers, underscores, and dashes.")
+
+        batch_path = batch_dir / f"{batch_id}.json"
+        run = read_json(batch_path, {}) if batch_path.exists() else {}
+        if run and str(run.get("run_id") or "") not in {"", batch_id}:
+            raise ValueError(f"Batch file does not match requested batch id: {batch_id}")
+        if not run:
+            run = {
+                "run_id": batch_id,
+                "manual": True,
+                "dry_run": False,
+                "started_at": now,
+                "finished_at": now,
+                "created": [],
+                "samples": [],
+            }
+
+        created = [item for item in run.get("created", []) if isinstance(item, str) and item]
+        if sample_id not in created:
+            created.append(sample_id)
+        run["created"] = created
+        run["count"] = len(created)
+        run["manual"] = bool(run.get("manual", False)) or create_new
+        run["finished_at"] = run.get("finished_at") or now
+        run["updated_at"] = now
+        write_json(batch_path, run)
+        return {"batch_id": batch_id, "sample_id": sample_id, "sample_ids": created, "summary_path": str(batch_path)}
+
+    def delete_batch(self, batch_id_value: str) -> dict[str, Any]:
+        batch_id, batch_path = self.batch_path_for_id(batch_id_value)
+        if not batch_path.exists():
+            raise ValueError(f"Batch not found: {batch_id}")
+        batch_path.unlink()
+        return {"batch_id": batch_id, "deleted": True}
+
+    def remove_sample_from_batch(self, batch_id_value: str, sample_id_value: str) -> dict[str, Any]:
+        batch_id, batch_path = self.batch_path_for_id(batch_id_value)
+        sample_id = safe_token(sample_id_value, "")
+        if not sample_id or sample_id != sample_id_value:
+            raise ValueError("Invalid sample id.")
+        if not batch_path.exists():
+            raise ValueError(f"Batch not found: {batch_id}")
+
+        run = read_json(batch_path, {})
+        if not isinstance(run, dict) or not run:
+            raise ValueError(f"Batch is empty or invalid: {batch_id}")
+        before = self.batch_sample_ids(run)
+
+        run["created"] = [
+            item
+            for item in run.get("created", [])
+            if isinstance(item, str) and item and item != sample_id
+        ]
+        samples = run.get("samples", [])
+        if isinstance(samples, list):
+            run["samples"] = [
+                item
+                for item in samples
+                if not (isinstance(item, dict) and item.get("sample_id") == sample_id)
+            ]
+        else:
+            run["samples"] = []
+
+        after = self.batch_sample_ids(run)
+        if len(after) == len(before):
+            raise ValueError(f"Sample {sample_id} is not in batch {batch_id}.")
+
+        run["count"] = len(after)
+        run["updated_at"] = int(time.time())
+        write_json(batch_path, run)
+        return {"batch_id": batch_id, "sample_id": sample_id, "sample_ids": after, "summary_path": str(batch_path)}
+
     def sample_membership(self) -> dict[str, list[str]]:
         membership: dict[str, list[str]] = {}
         for run in self.batch_summaries():
@@ -623,6 +748,7 @@ class WorkflowStore:
                     "samples": samples,
                     "created": run.get("created", []),
                     "seed": run.get("seed", 0),
+                    "manual": bool(run.get("manual", False)),
                     "face_limit_range": run.get("face_limit_range", []),
                     "failed_count": len(failures),
                     "summary_path": run.get("summary_path", ""),
@@ -849,6 +975,131 @@ class WorkflowStore:
         job_payload["action"] = "run-batch"
         return self.start_job(job_payload, [command])
 
+    def start_training(self, payload: dict[str, Any]) -> dict[str, Any]:
+        epochs = bounded_int(payload.get("epochs"), 40, 1, 10000)
+        batch_size = bounded_int(payload.get("batchSize"), 32, 1, 1024)
+        num_points = bounded_int(payload.get("numPoints"), 1024, 32, 100000)
+        seed = bounded_int(payload.get("seed"), 20260531, 0, 999999999)
+        device = str(payload.get("device") or "auto").strip() or "auto"
+        out_dir = str(payload.get("outDir") or "models/qwalk_guide_initializer").strip()
+        real_data_dir = REPO_ROOT / "data" / "real_quadrupeds"
+        batch_id = safe_token(payload.get("batchId"), "")
+        if batch_id:
+            real_data_dir = self.real_dataset_for_batch(batch_id)
+
+        train_command = [
+            WORKFLOW_PYTHON,
+            str(REPO_ROOT / "scripts" / "train_guide_initializer.py"),
+            "--out",
+            out_dir,
+            "--epochs",
+            str(epochs),
+            "--batch-size",
+            str(batch_size),
+            "--num-points",
+            str(num_points),
+            "--device",
+            device,
+            "--seed",
+            str(seed),
+            "--real-data",
+            str(real_data_dir),
+            "--real-only",
+        ]
+        if payload.get("allowUnverifiedReal", False):
+            train_command.append("--allow-unverified-real")
+
+        job_payload = dict(payload)
+        job_payload.update(
+            {
+                "action": "train-guide-initializer",
+                "epochs": epochs,
+                "batchSize": batch_size,
+                "numPoints": num_points,
+                "device": device,
+                "outDir": out_dir,
+                "batchId": batch_id,
+            }
+        )
+        return self.start_job(job_payload, [train_command])
+
+    def real_dataset_for_batch(self, batch_id: str) -> Path:
+        sample_ids: list[str] = []
+        for run in self.batch_summaries():
+            if str(run.get("run_id") or "") == batch_id:
+                sample_ids = self.batch_sample_ids(run)
+                break
+        if not sample_ids:
+            raise ValueError(f"Batch has no samples: {batch_id}")
+
+        source_root = REPO_ROOT / "data" / "real_quadrupeds"
+        source_manifest = source_root / "manifest.jsonl"
+        source_info = source_root / "dataset_info.json"
+        if not source_manifest.exists() or not source_info.exists():
+            raise FileNotFoundError("No exported real-label dataset found yet.")
+
+        records = []
+        selected = set(sample_ids)
+        for line in source_manifest.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            record = json.loads(line)
+            if record.get("id") in selected and record.get("verified_label", False):
+                records.append(record)
+        if not records:
+            raise ValueError(f"Batch {batch_id} has no verified exported labels.")
+
+        target_root = REPO_ROOT / "data" / "training_batches" / batch_id
+        if target_root.exists():
+            shutil.rmtree(target_root)
+        target_root.mkdir(parents=True, exist_ok=True)
+        manifest_lines = []
+        animal_types: list[str] = []
+        morphology_types: list[str] = []
+        animal_counts: dict[str, int] = {}
+        split_counts: dict[str, int] = {}
+        for record in records:
+            split = str(record.get("split") or "train")
+            split_dir = target_root / split
+            split_dir.mkdir(parents=True, exist_ok=True)
+            label_src = source_root / str(record.get("label_file") or f"{split}/{record['id']}.json")
+            mesh_src = source_root / str(record.get("mesh_file") or f"{split}/{record['id']}.obj")
+            label_dest = split_dir / label_src.name
+            mesh_dest = split_dir / mesh_src.name
+            shutil.copy2(label_src, label_dest)
+            shutil.copy2(mesh_src, mesh_dest)
+            subset_record = dict(record)
+            subset_record["label_file"] = f"{split}/{label_dest.name}"
+            subset_record["mesh_file"] = f"{split}/{mesh_dest.name}"
+            manifest_lines.append(json.dumps(subset_record, separators=(",", ":")) + "\n")
+            animal = str(subset_record.get("animal_type") or "unknown")
+            morphology = str(subset_record.get("morphology_type") or "unknown")
+            if animal not in animal_types:
+                animal_types.append(animal)
+            if morphology not in morphology_types:
+                morphology_types.append(morphology)
+            animal_counts[animal] = animal_counts.get(animal, 0) + 1
+            split_counts[split] = split_counts.get(split, 0) + 1
+
+        (target_root / "manifest.jsonl").write_text("".join(manifest_lines), encoding="utf-8")
+        dataset_info = {
+            "source": "real_qwalk_batch_labels",
+            "batch_id": batch_id,
+            "count": len(records),
+            "verified_count": len(records),
+            "animal_counts": animal_counts,
+            "split_counts": split_counts,
+            "label_schema": {
+                "animal_type": animal_types,
+                "morphology_type": morphology_types,
+                "guide_bones": "QWalk guide bone head/tail coordinates in mesh space",
+                "landmarks": "Simplified joint/centerline landmarks derived from guide_bones",
+                "axes": "forward, left, and up vectors in mesh space",
+            },
+        }
+        (target_root / "dataset_info.json").write_text(json.dumps(dataset_info, indent=2) + "\n", encoding="utf-8")
+        return target_root
+
     def workflow_command(self, *parts: str) -> list[str]:
         return [WORKFLOW_PYTHON, str(WORKFLOW_SCRIPT), "--work-root", str(self.work_root), *parts]
 
@@ -919,6 +1170,8 @@ class WorkflowStore:
         elif action == "poll-tripo":
             commands = [self.workflow_command("poll-tripo", "--sample-id", sample_id)]
         elif action == "prepare-label-work":
+            profile = label_profile_for_state(state)
+            source_axis = mesh_forward_axis_for_state(state)
             commands = [
                 self.workflow_command(
                     "prepare-label-work",
@@ -926,6 +1179,10 @@ class WorkflowStore:
                     sample_id,
                     "--blender",
                     self.blender_path(),
+                    "--profile",
+                    profile,
+                    "--mesh-forward-axis",
+                    source_axis,
                 )
             ]
         elif action == "export-verified":
@@ -949,6 +1206,8 @@ class WorkflowStore:
             job_payload["faceLimit"] = face_limit
             commands = self.pipeline_commands_for_sample(sample_id, state, face_limit)
             if payload.get("prepareLabelWork") and not self.state_has_label_work_file(state):
+                profile = label_profile_for_state(state)
+                source_axis = mesh_forward_axis_for_state(state)
                 commands.append(
                     self.workflow_command(
                         "prepare-label-work",
@@ -956,6 +1215,10 @@ class WorkflowStore:
                         sample_id,
                         "--blender",
                         self.blender_path(),
+                        "--profile",
+                        profile,
+                        "--mesh-forward-axis",
+                        source_axis,
                     )
                 )
         else:
@@ -1127,8 +1390,13 @@ class WorkflowStore:
         variant_tags = string_list(payload.get("variantTags"))
         if armor_state and armor_state not in variant_tags:
             variant_tags.insert(0, armor_state)
-        label_profile = str(payload.get("labelProfile") or "AUTO").strip() or "AUTO"
-        mesh_forward_axis = str(payload.get("meshForwardAxis") or "POS_X").strip() or "POS_X"
+        default_label_profile = label_profile_for_body_plan(morphology_type)
+        label_profile = str(payload.get("labelProfile") or default_label_profile).strip().upper() or default_label_profile
+        if label_profile not in LABEL_PROFILE_CHOICES:
+            label_profile = default_label_profile
+        mesh_forward_axis = str(payload.get("meshForwardAxis") or "AUTO").strip().upper() or "AUTO"
+        if mesh_forward_axis not in MESH_FORWARD_AXIS_CHOICES:
+            mesh_forward_axis = "AUTO"
         skeleton_schema_id = skeleton_schema_id_for_body_plan(self.catalog().get("label_schema", {}), morphology_type)
         now = int(time.time())
         state = {
@@ -1334,6 +1602,9 @@ class QWalkUIHandler(BaseHTTPRequestHandler):
             if parsed.path == "/api/run-batch":
                 job = self.store.start_run_batch(payload)
                 self.send_json(job, status=202)
+            elif parsed.path == "/api/train-guide-initializer":
+                job = self.store.start_training(payload)
+                self.send_json(job, status=202)
             elif parsed.path == "/api/settings":
                 self.send_json(self.store.update_settings(payload))
             elif parsed.path == "/api/samples":
@@ -1355,6 +1626,14 @@ class QWalkUIHandler(BaseHTTPRequestHandler):
                 sample_id = unquote(parts[2])
                 result = self.store.reset_stale_sample_job(sample_id)
                 self.send_json(result)
+            elif parsed.path.startswith("/api/samples/") and parsed.path.endswith("/batches"):
+                parts = parsed.path.strip("/").split("/")
+                if len(parts) != 4 or parts[0] != "api" or parts[1] != "samples" or parts[3] != "batches":
+                    self.send_error(404, "Not found")
+                    return
+                sample_id = unquote(parts[2])
+                result = self.store.add_sample_to_batch(sample_id, payload)
+                self.send_json(result)
             elif parsed.path.startswith("/api/samples/") and "/actions/" in parsed.path:
                 parts = parsed.path.strip("/").split("/")
                 if len(parts) != 5 or parts[0] != "api" or parts[1] != "samples" or parts[3] != "actions":
@@ -1364,6 +1643,21 @@ class QWalkUIHandler(BaseHTTPRequestHandler):
                 action = unquote(parts[4])
                 job = self.store.start_sample_action(sample_id, action, payload)
                 self.send_json(job, status=202)
+            else:
+                self.send_error(404, "Not found")
+        except Exception as error:
+            self.send_json({"error": str(error)}, status=400)
+
+    def do_DELETE(self) -> None:
+        parsed = urlparse(self.path)
+        try:
+            parts = parsed.path.strip("/").split("/")
+            if len(parts) == 3 and parts[0] == "api" and parts[1] == "batches":
+                result = self.store.delete_batch(unquote(parts[2]))
+                self.send_json(result)
+            elif len(parts) == 5 and parts[0] == "api" and parts[1] == "batches" and parts[3] == "samples":
+                result = self.store.remove_sample_from_batch(unquote(parts[2]), unquote(parts[4]))
+                self.send_json(result)
             else:
                 self.send_error(404, "Not found")
         except Exception as error:

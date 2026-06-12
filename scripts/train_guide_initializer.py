@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Train a point-cloud QWalk guide initializer on synthetic quadrupeds."""
+"""Train a point-cloud QWalk guide initializer from verified Nito labels."""
 
 from __future__ import annotations
 
@@ -376,22 +376,26 @@ def guide_bones_from_points(points_by_name: dict[str, list[float]]) -> dict[str,
 
 def train(args: argparse.Namespace) -> dict[str, float]:
     set_seed(args.seed)
-    data_dir = Path(args.data)
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
     device = resolve_device(args.device)
 
-    train_samples, animal_types, morphology_types = load_samples(data_dir, "train")
-    val_samples, _, _ = load_samples(data_dir, "val")
-    test_samples, _, _ = load_samples(data_dir, "test")
-    real_samples = []
-    if args.real_data:
-        real_samples, _, _ = load_samples(
-            Path(args.real_data),
-            "train",
-            require_verified_labels=not args.allow_unverified_real,
-        )
-        train_samples = train_samples + real_samples * args.real_repeat
+    if not args.real_data:
+        raise ValueError("--real-data is required.")
+    real_dir = Path(args.real_data)
+    train_samples, animal_types, morphology_types = load_samples(
+        real_dir,
+        "train",
+        require_verified_labels=not args.allow_unverified_real,
+    )
+    try:
+        val_samples, _, _ = load_samples(real_dir, "val", require_verified_labels=not args.allow_unverified_real)
+    except ValueError:
+        val_samples = train_samples
+    try:
+        test_samples, _, _ = load_samples(real_dir, "test", require_verified_labels=not args.allow_unverified_real)
+    except ValueError:
+        test_samples = val_samples
 
     train_dataset = QuadrupedPointDataset(train_samples, animal_types, morphology_types, args.num_points, augment=True)
     val_dataset = QuadrupedPointDataset(val_samples, animal_types, morphology_types, args.num_points, augment=False)
@@ -413,8 +417,9 @@ def train(args: argparse.Namespace) -> dict[str, float]:
     best_path = out_dir / "qwalk_guide_initializer.pt"
     history = []
 
-    if real_samples:
-        print(f"Added {len(real_samples)} real sample(s), repeated {args.real_repeat}x.")
+    print(f"Training only on {len(train_samples)} verified real sample(s).")
+    if val_samples is train_samples or test_samples is val_samples:
+        print("Validation/test splits were not present, so Nito is reusing available labeled samples for metrics.")
     print(f"Training on {len(train_samples)} samples, validating on {len(val_samples)}, testing on {len(test_samples)}.")
     print(f"Device: {device}; points/sample: {args.num_points}; guide points: {len(TARGET_POINT_NAMES)}.")
 
@@ -476,8 +481,7 @@ def train(args: argparse.Namespace) -> dict[str, float]:
                     "epoch": epoch,
                     "val_metrics": val_metrics,
                     "args": vars(args),
-                    "real_sample_count": len(real_samples),
-                    "real_repeat": args.real_repeat,
+                    "real_sample_count": len(train_samples),
                 },
                 best_path,
             )
@@ -486,6 +490,9 @@ def train(args: argparse.Namespace) -> dict[str, float]:
     model.load_state_dict(checkpoint["model_state"])
     test_metrics = evaluate(model, test_loader, device, args.animal_weight, args.morphology_weight)
     metrics = {
+        "real_sample_count": len(train_samples),
+        "val_sample_count": len(val_samples),
+        "test_sample_count": len(test_samples),
         "best_val_epoch": checkpoint["epoch"],
         **{f"best_val_{key}": value for key, value in best_metrics.items()},
         **{f"test_{key}": value for key, value in test_metrics.items()},
@@ -510,10 +517,9 @@ def train(args: argparse.Namespace) -> dict[str, float]:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Train a synthetic QWalk guide initializer.")
-    parser.add_argument("--data", default="data/synthetic_quadrupeds", help="Synthetic dataset directory.")
-    parser.add_argument("--real-data", default="", help="Optional real labeled dataset directory to mix into training.")
-    parser.add_argument("--real-repeat", type=int, default=24, help="How many times to repeat real train samples.")
+    parser = argparse.ArgumentParser(description="Train a Nito guide initializer from verified labels.")
+    parser.add_argument("--real-data", required=True, help="Verified real labeled dataset directory.")
+    parser.add_argument("--real-only", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument(
         "--allow-unverified-real",
         action="store_true",
@@ -538,8 +544,6 @@ def parse_args() -> argparse.Namespace:
         parser.error("--batch-size must be positive.")
     if args.num_points <= 0:
         parser.error("--num-points must be positive.")
-    if args.real_repeat <= 0:
-        parser.error("--real-repeat must be positive.")
     return args
 
 

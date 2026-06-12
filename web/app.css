@@ -139,6 +139,44 @@ a {
   outline-offset: 2px;
 }
 
+.danger-button {
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px solid rgba(169, 67, 48, 0.38);
+  border-radius: 6px;
+  background: rgba(255, 246, 242, 0.92);
+  color: #8f2e20;
+}
+
+.danger-button:hover {
+  border-color: rgba(169, 67, 48, 0.62);
+  background: rgba(255, 238, 232, 0.98);
+}
+
+.card-actions,
+.detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.removable-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.removable-tag button {
+  min-height: 24px;
+  padding: 0 7px;
+  border: 1px solid rgba(169, 67, 48, 0.26);
+  border-radius: 999px;
+  background: rgba(255, 246, 242, 0.9);
+  color: #8f2e20;
+  font-size: 0.72rem;
+}
+
 .topbar {
   position: sticky;
   top: 0;
@@ -1517,11 +1555,43 @@ textarea:focus {
   font-size: 12px;
 }
 
-.field-grid {
+.field-grid,
+.form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
   margin-top: 12px;
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.checkbox-row input {
+  width: auto;
+}
+
+.inline-batch-form {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) minmax(160px, 1fr) auto;
+  gap: 12px;
+  align-items: end;
+  margin-top: 12px;
+}
+
+.inline-batch-form button {
+  min-height: 38px;
+}
+
+.advanced-training {
+  margin-top: 12px;
+}
+
+.advanced-training summary {
+  cursor: pointer;
+  font-weight: 700;
 }
 
 .page-heading {

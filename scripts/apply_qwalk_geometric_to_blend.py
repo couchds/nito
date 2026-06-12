@@ -20,7 +20,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--guides-only", action="store_true", help="Create only the editable guide armature.")
     parser.add_argument("--no-bind", action="store_true", help="Skip mesh binding.")
     parser.add_argument("--no-animate", action="store_true", help="Skip walk-cycle key generation.")
-    parser.add_argument("--profile", default="AUTO", choices=("AUTO", "MEDIUM", "STOCKY", "HORSE"))
+    parser.add_argument("--profile", default="AUTO", choices=("AUTO", "MEDIUM", "STOCKY", "HORSE", "SPRAWLING"))
     parser.add_argument("--mesh-forward-axis", default="AUTO", choices=("AUTO", "POS_Y", "NEG_Y", "POS_X", "NEG_X"))
     return parser.parse_args(script_args)
 
@@ -104,6 +104,7 @@ def main() -> None:
         fit_amount=0.88,
         robust_bounds=True,
         top_percentile=88.0,
+        use_learned_initializer=False,
     )
     if guide_result != {"FINISHED"}:
         raise RuntimeError(f"Create Fitting Guides failed: {guide_result}")

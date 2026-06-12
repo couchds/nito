@@ -154,6 +154,9 @@ const elements = {
   createSampleButton: document.querySelector("#createSampleButton"),
   runForm: document.querySelector("#runForm"),
   runButton: document.querySelector("#runButton"),
+  trainForm: document.querySelector("#trainForm"),
+  trainButton: document.querySelector("#trainButton"),
+  trainBatchSelect: document.querySelector("#trainBatchSelect"),
   promptInput: document.querySelector("#promptInput"),
   promptNextButton: document.querySelector("#promptNextButton"),
   schemaBackButton: document.querySelector("#schemaBackButton"),
@@ -623,6 +626,7 @@ function jobActionLabel(value) {
     "prepare-label-work": "Blender prep",
     "export-verified": "Verified label export",
     "run-pipeline": "Automatic pipeline",
+    "train-guide-initializer": "Guide initializer training",
   };
   return labels[value] || labelText(value || "job");
 }
@@ -696,8 +700,23 @@ function render() {
   renderSamples();
   renderSampleDetail();
   renderJobs();
+  renderTrainingControls();
   renderSettings();
   applyRoute(route);
+}
+
+function renderTrainingControls() {
+  if (!elements.trainBatchSelect) return;
+  const current = elements.trainBatchSelect.value;
+  elements.trainBatchSelect.innerHTML = `
+    <option value="">All verified labels</option>
+    ${state.batches
+      .map((batch) => `<option value="${escapeHtml(batch.run_id)}">${escapeHtml(batch.run_id)} (${batch.count || 0})</option>`)
+      .join("")}
+  `;
+  if (state.batches.some((batch) => batch.run_id === current)) {
+    elements.trainBatchSelect.value = current;
+  }
 }
 
 function renderHome() {
@@ -759,7 +778,10 @@ function renderBatches() {
             ${faceRange ? tag(faceRange) : ""}
             ${batch.failed_count ? tag(`${batch.failed_count} failed`) : tag("0 failed")}
           </div>
-          <a class="button-link" href="${escapeHtml(pagePath("batchDetail", batch.run_id))}">View Batch</a>
+          <div class="card-actions">
+            <a class="button-link" href="${escapeHtml(pagePath("batchDetail", batch.run_id))}">View Batch</a>
+            <button type="button" class="danger-button" data-delete-batch="${escapeHtml(batch.run_id)}">Delete Batch</button>
+          </div>
         </article>
       `;
     })
@@ -789,18 +811,21 @@ function renderBatchDetail() {
       ${batch.seed ? tag(`seed ${batch.seed}`) : ""}
       ${batch.summary_path ? tag("summary saved") : ""}
     </div>
+    <div class="detail-actions">
+      <button type="button" class="danger-button" data-delete-batch="${escapeHtml(batch.run_id)}">Delete Batch</button>
+    </div>
     <h4>Samples</h4>
     <div class="sample-list batch-sample-list">
       ${
         sampleIds.length
-          ? sampleIds.map((sampleId) => batchSampleCard(sampleId)).join("")
+          ? sampleIds.map((sampleId) => batchSampleCard(batch.run_id, sampleId)).join("")
           : '<p class="empty">This batch has no sample membership recorded.</p>'
       }
     </div>
   `;
 }
 
-function batchSampleCard(sampleId) {
+function batchSampleCard(batchId, sampleId) {
   const sample = sampleById(sampleId);
   if (!sample) {
     return `
@@ -809,10 +834,18 @@ function batchSampleCard(sampleId) {
           <h3>${escapeHtml(sampleId)}</h3>
           ${tag("missing")}
         </div>
+        <button
+          type="button"
+          class="danger-button"
+          data-remove-sample-from-batch="${escapeHtml(sampleId)}"
+          data-batch-id="${escapeHtml(batchId)}"
+        >
+          Remove from Batch
+        </button>
       </article>
     `;
   }
-  return sampleCard(sample, { compact: true, buttonLabel: "Open sample" });
+  return sampleCard(sample, { compact: true, buttonLabel: "Open sample", batchId });
 }
 
 function renderSamples() {
@@ -834,6 +867,16 @@ function sampleCard(sample, options = {}) {
     : "";
   const batches = sample.batches || [];
   const buttonLabel = options.buttonLabel || "View Sample";
+  const batchAction = options.batchId
+    ? `<button
+        type="button"
+        class="danger-button"
+        data-remove-sample-from-batch="${escapeHtml(sample.sample_id)}"
+        data-batch-id="${escapeHtml(options.batchId)}"
+      >
+        Remove from Batch
+      </button>`
+    : "";
   return `
     <article class="sample-item">
       <div class="sample-title-row">
@@ -858,7 +901,10 @@ function sampleCard(sample, options = {}) {
             ${Object.keys(sample.reference_images || {}).length ? tag("reference") : ""}
             ${Object.keys(sample.review_images || {}).length ? tag("review") : ""}
           </div>
-          <a class="button-link" href="${escapeHtml(pagePath("sampleDetail", sample.sample_id))}">${escapeHtml(buttonLabel)}</a>
+          <div class="card-actions">
+            <a class="button-link" href="${escapeHtml(pagePath("sampleDetail", sample.sample_id))}">${escapeHtml(buttonLabel)}</a>
+            ${batchAction}
+          </div>
         </div>
       </div>
     </article>
@@ -1091,6 +1137,60 @@ function sampleActionPanel(sample) {
         ${latestJob ? tag(`job ${latestJob.job_id}`) : ""}
         ${sample.ui_job?.action ? tag(sample.ui_job.action) : ""}
       </div>
+    </section>
+  `;
+}
+
+function sampleBatchPanel(sample) {
+  const currentBatches = sample.batches || [];
+  const availableBatches = state.batches.filter((batch) => !currentBatches.includes(batch.run_id));
+  return `
+    <section class="sample-actions batch-assignment">
+      <div class="action-header">
+        <div>
+          <h4>Batch Membership</h4>
+          <p class="detail-meta">
+            ${currentBatches.length ? `In ${currentBatches.length} batch${currentBatches.length === 1 ? "" : "es"}` : "Not assigned to a batch yet."}
+          </p>
+        </div>
+      </div>
+      <div class="tag-row">
+        ${
+          currentBatches.length
+            ? currentBatches
+                .map(
+                  (batchId) => `
+                    <span class="removable-tag">
+                      ${tag(batchId)}
+                      <button
+                        type="button"
+                        data-remove-sample-from-batch="${escapeHtml(sample.sample_id)}"
+                        data-batch-id="${escapeHtml(batchId)}"
+                        title="Remove from batch"
+                      >
+                        Remove
+                      </button>
+                    </span>
+                  `,
+                )
+                .join("")
+            : tag("unbatched")
+        }
+      </div>
+      <form class="inline-batch-form" data-batch-form="${escapeHtml(sample.sample_id)}">
+        <label>
+          Existing batch
+          <select name="batchId">
+            <option value="">Create new batch</option>
+            ${availableBatches.map((batch) => `<option value="${escapeHtml(batch.run_id)}">${escapeHtml(batch.run_id)}</option>`).join("")}
+          </select>
+        </label>
+        <label>
+          New batch id
+          <input name="newBatchId" type="text" placeholder="manual_training_set">
+        </label>
+        <button type="submit">Add to Batch</button>
+      </form>
     </section>
   `;
 }
@@ -1329,6 +1429,7 @@ function renderSampleDetail() {
       ${(sample.variant_tags || []).map((value) => tag(value)).join("")}
     </div>
     ${skeletonSchemaPanel(sample)}
+    ${sampleBatchPanel(sample)}
     ${sampleActionPanel(sample)}
     ${modelPanel(sample)}
     ${gallery("OpenAI References", sample.reference_images, ["front", "left", "right", "back"])}
@@ -1429,6 +1530,19 @@ function batchPayload() {
   };
 }
 
+function trainingPayload() {
+  const formData = new FormData(elements.trainForm);
+  return {
+    epochs: Number(formData.get("epochs") || 40),
+    batchSize: Number(formData.get("batchSize") || 32),
+    numPoints: Number(formData.get("numPoints") || 1024),
+    batchId: formData.get("batchId") || "",
+    device: formData.get("device") || "auto",
+    seed: Number(formData.get("seed") || 20260531),
+    outDir: formData.get("outDir") || "models/qwalk_guide_initializer",
+  };
+}
+
 async function createSample(event) {
   event.preventDefault();
   if (!elements.sampleMorphologySelect.value) {
@@ -1487,6 +1601,27 @@ async function startBatch(event) {
   }
 }
 
+async function startTraining(event) {
+  event.preventDefault();
+  elements.trainButton.disabled = true;
+  elements.statusLine.textContent = "Starting guide initializer training";
+  try {
+    const job = await fetchJson("/api/train-guide-initializer", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(trainingPayload()),
+    });
+    state.selectedJobId = job.job_id;
+    await loadState();
+    await loadJobLog(job.job_id);
+    navigateTo("/jobs");
+  } catch (error) {
+    elements.statusLine.textContent = error.message;
+  } finally {
+    elements.trainButton.disabled = false;
+  }
+}
+
 async function loadJobLog(jobId) {
   const job = await fetchJson(`/api/jobs/${jobId}`);
   state.selectedJobId = jobId;
@@ -1527,6 +1662,56 @@ async function resetStaleSample(sampleId) {
   state.selectedSampleId = sampleId;
   await loadState();
   renderSampleDetail();
+}
+
+async function addSampleToBatch(sampleId, form) {
+  const formData = new FormData(form);
+  const batchId = String(formData.get("batchId") || "").trim();
+  const newBatchId = String(formData.get("newBatchId") || "").trim();
+  elements.statusLine.textContent = "Updating batch membership";
+  await fetchJson(`/api/samples/${encodeURIComponent(sampleId)}/batches`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      batchId,
+      newBatchId,
+      createNew: !batchId,
+    }),
+  });
+  state.selectedSampleId = sampleId;
+  await loadState();
+  renderSampleDetail();
+  elements.statusLine.textContent = "Sample added to batch";
+}
+
+async function deleteBatch(batchId) {
+  const batch = state.batches.find((item) => item.run_id === batchId);
+  const count = batch?.sample_ids?.length || batch?.count || 0;
+  const ok = window.confirm(`Delete batch "${batchId}"? This removes the grouping only; samples and labels stay on disk. (${count} sample${count === 1 ? "" : "s"})`);
+  if (!ok) return;
+  elements.statusLine.textContent = "Deleting batch";
+  await fetchJson(`/api/batches/${encodeURIComponent(batchId)}`, { method: "DELETE" });
+  if (state.selectedBatchId === batchId) {
+    state.selectedBatchId = "";
+    navigateTo("/batches", { replace: true });
+  }
+  await loadState();
+  render();
+  elements.statusLine.textContent = `Deleted batch ${batchId}`;
+}
+
+async function removeSampleFromBatch(batchId, sampleId) {
+  const ok = window.confirm(`Remove sample "${sampleId}" from batch "${batchId}"? The sample and its files will not be deleted.`);
+  if (!ok) return;
+  elements.statusLine.textContent = "Removing sample from batch";
+  await fetchJson(`/api/batches/${encodeURIComponent(batchId)}/samples/${encodeURIComponent(sampleId)}`, {
+    method: "DELETE",
+  });
+  await loadState();
+  if (state.selectedSampleId === sampleId) renderSampleDetail();
+  if (state.selectedBatchId === batchId) renderBatchDetail();
+  renderCounts();
+  elements.statusLine.textContent = `Removed ${sampleId} from ${batchId}`;
 }
 
 async function saveSettings(event) {
@@ -1571,9 +1756,60 @@ elements.sampleForm.addEventListener("submit", createSample);
 if (elements.runForm) {
   elements.runForm.addEventListener("submit", startBatch);
 }
+if (elements.trainForm) {
+  elements.trainForm.addEventListener("submit", startTraining);
+}
 elements.settingsForm.addEventListener("submit", saveSettings);
 window.addEventListener("nito-three-ready", () => hydrateModelViewers(elements.sampleDetail));
+elements.batchList.addEventListener("click", async (event) => {
+  const deleteButton = event.target.closest("button[data-delete-batch]");
+  if (!deleteButton) return;
+  deleteButton.disabled = true;
+  try {
+    await deleteBatch(deleteButton.dataset.deleteBatch);
+  } catch (error) {
+    elements.statusLine.textContent = error.message;
+  } finally {
+    deleteButton.disabled = false;
+  }
+});
+elements.batchDetail.addEventListener("click", async (event) => {
+  const deleteButton = event.target.closest("button[data-delete-batch]");
+  if (deleteButton) {
+    deleteButton.disabled = true;
+    try {
+      await deleteBatch(deleteButton.dataset.deleteBatch);
+    } catch (error) {
+      elements.statusLine.textContent = error.message;
+    } finally {
+      deleteButton.disabled = false;
+    }
+    return;
+  }
+  const removeButton = event.target.closest("button[data-remove-sample-from-batch]");
+  if (!removeButton) return;
+  removeButton.disabled = true;
+  try {
+    await removeSampleFromBatch(removeButton.dataset.batchId, removeButton.dataset.removeSampleFromBatch);
+  } catch (error) {
+    elements.statusLine.textContent = error.message;
+  } finally {
+    removeButton.disabled = false;
+  }
+});
 elements.sampleDetail.addEventListener("click", async (event) => {
+  const removeBatchButton = event.target.closest("button[data-remove-sample-from-batch]");
+  if (removeBatchButton) {
+    removeBatchButton.disabled = true;
+    try {
+      await removeSampleFromBatch(removeBatchButton.dataset.batchId, removeBatchButton.dataset.removeSampleFromBatch);
+    } catch (error) {
+      elements.statusLine.textContent = error.message;
+    } finally {
+      removeBatchButton.disabled = false;
+    }
+    return;
+  }
   const resetButton = event.target.closest("button[data-reset-stale]");
   if (resetButton) {
     resetButton.disabled = true;
@@ -1606,6 +1842,21 @@ elements.sampleDetail.addEventListener("click", async (event) => {
   if (!logButton) return;
   await loadJobLog(logButton.dataset.jobId);
   navigateTo("/jobs");
+});
+elements.sampleDetail.addEventListener("submit", async (event) => {
+  const form = event.target.closest("form[data-batch-form]");
+  if (!form) return;
+  event.preventDefault();
+  const sampleId = form.dataset.batchForm;
+  const button = form.querySelector("button[type='submit']");
+  button.disabled = true;
+  try {
+    await addSampleToBatch(sampleId, form);
+  } catch (error) {
+    elements.statusLine.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
 });
 elements.jobList.addEventListener("click", async (event) => {
   const button = event.target.closest("button[data-job-id]");
