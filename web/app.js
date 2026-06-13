@@ -625,6 +625,7 @@ function jobActionLabel(value) {
     "poll-tripo": "Model download",
     "prepare-label-work": "Blender prep",
     "export-verified": "Verified label export",
+    "extract-guide": "Guide extraction",
     "run-pipeline": "Automatic pipeline",
     "train-guide-initializer": "Guide initializer training",
   };
@@ -646,6 +647,7 @@ function jobSupersededByArtifacts(sample, job) {
   if (action === "poll-tripo" && sample.model?.url) return true;
   if (action === "generate-reference" && hasReferenceSet(sample)) return true;
   if (action === "export-verified" && isTrainingReadySample(sample)) return true;
+  if (action === "extract-guide" && sample.guide?.editable) return true;
   return false;
 }
 
@@ -949,11 +951,13 @@ function gallery(title, images, preferredOrder) {
 function modelPanel(sample) {
   const model = sample.model || {};
   const verifiedLabel = sample.verified_label || {};
+  const guide = sample.guide || {};
   const localUrl = model.url || "";
   const remoteUrl = model.remote_url || "";
   const viewerUrl = model.viewer_url || "";
   const labelUrl = verifiedLabel.url || "";
-  const labelMeshUrl = verifiedLabel.mesh_url || "";
+  const guideMeshUrl = guide.editable ? guide.mesh_url || "" : "";
+  const labelMeshUrl = guideMeshUrl || verifiedLabel.mesh_url || "";
   const displayUrl = localUrl || remoteUrl || viewerUrl || labelMeshUrl;
   const previewUrl = model.preview_proxy_url || model.preview_url || "";
   const safeDisplayUrl = escapeHtml(displayUrl);
@@ -1004,6 +1008,7 @@ function modelPanel(sample) {
               data-label-src="${safeLabelUrl}"
               data-label-mesh-src="${safeLabelMeshUrl}"
               data-poster-src="${safePreviewUrl}"
+              ${guide.editable ? `data-guide-api="${escapeHtml(guide.api_url || "")}"` : ""}
             >
               <div class="three-toolbar" aria-label="3D model viewport controls">
                 <button type="button" data-three-action="zoom-in" title="Zoom in" aria-label="Zoom in">+</button>
@@ -1012,6 +1017,7 @@ function modelPanel(sample) {
                 <button type="button" data-three-action="grid" title="Toggle grid">Grid</button>
                 <button type="button" data-three-action="wireframe" title="Toggle wireframe">Wire</button>
                 ${labelUrl ? `<button type="button" class="is-active" data-three-action="labels" title="Toggle exported skeleton overlay">Skeleton</button>` : ""}
+                ${guide.editable ? `<button type="button" class="edit-skeleton-button" data-three-action="edit" title="Edit the guide skeleton in the browser">Edit Skeleton</button>` : ""}
                 <button type="button" data-three-action="spin" title="Toggle auto rotate">Spin</button>
               </div>
               <div class="three-stage">
@@ -1044,6 +1050,7 @@ function modelPanel(sample) {
         ${isRemoteOnly ? " | browser preview may depend on Tripo CORS" : ""}
         ${labelUrl ? ` | verified skeleton overlay${labelBoneCount ? ` (${labelBoneCount} bones)` : ""}` : ""}
         ${labelMeshUrl ? " | viewport uses canonical label mesh for Blender alignment" : ""}
+        ${guide.edited ? " | browser skeleton edits saved" : ""}
       </p>
     </div>
   `;
@@ -1221,6 +1228,7 @@ function pipelineState(sample, activeJob) {
   const hasRemoteModel = Boolean(sample.model?.remote_url);
   const hasModel = Boolean(sample.model?.url);
   const hasBlenderFile = Boolean(sample.label_work_blend);
+  const guideReady = hasBlenderFile || Boolean(sample.guide?.editable);
   const isVerified = isTrainingReadySample(sample);
   const schema = skeletonSchemaForSample(sample);
   const activeStage = activePipelineStage(sample, activeJob);
@@ -1258,20 +1266,24 @@ function pipelineState(sample, activeJob) {
     {
       key: "skeleton",
       title: "Skeleton",
-      detail: hasBlenderFile
+      detail: guideReady
         ? isVerified
           ? "Guide exported"
-          : `${schema?.label || "Schema"} placement`
+          : sample.guide?.edited
+            ? "Browser edits saved"
+            : sample.guide?.editable
+              ? "Edit in the 3D viewer"
+              : `${schema?.label || "Schema"} placement`
         : schema
           ? `${schema.label} waiting`
           : "Waiting on Blender file",
-      state: isVerified ? "complete" : hasBlenderFile ? "manual" : "blocked",
+      state: isVerified ? "complete" : guideReady ? "manual" : "blocked",
     },
     {
       key: "export",
       title: "Verified label",
-      detail: isVerified ? "Ready for training" : "Export after saving Blender edits",
-      state: stepState("export", isVerified, hasBlenderFile),
+      detail: isVerified ? "Ready for training" : "Export after saving skeleton edits",
+      state: stepState("export", isVerified, guideReady),
     },
   ];
 }
@@ -1300,7 +1312,7 @@ function nextPipelineAction(sample, activeJob) {
       detail: `${formatDuration(elapsedForJob(activeJob))} elapsed`,
     };
   }
-  if (!sample.label_work_blend) {
+  if (!sample.label_work_blend && !sample.guide?.editable) {
     const hasAnyMachineArtifact = hasReferenceSet(sample) || sample.tripo_task_id || sample.model?.url || sample.model?.remote_url;
     return {
       action: "run-pipeline",
@@ -1315,6 +1327,21 @@ function nextPipelineAction(sample, activeJob) {
       detail: "Verified label export is complete.",
     };
   }
+  const guide = sample.guide || {};
+  if (guide.editable) {
+    return {
+      action: "edit-skeleton",
+      label: guide.edited ? "Continue Skeleton Edits" : "Edit Skeleton in Browser",
+      detail: "Drag the guide joints in the 3D viewer below, save, then export. Blender stays optional.",
+    };
+  }
+  if (guide.extractable) {
+    return {
+      action: "extract-guide",
+      label: "Extract Guide for Web Editing",
+      detail: "Runs Blender once to dump the editable guide and canonical mesh for the browser editor.",
+    };
+  }
   return {
     action: "open-blender",
     label: "Open in Blender",
@@ -1323,7 +1350,9 @@ function nextPipelineAction(sample, activeJob) {
 }
 
 function verifiedExportAction(sample, activeJob) {
-  if (activeJob || !sample.label_work_blend || isTrainingReadySample(sample)) return "";
+  if (activeJob || isTrainingReadySample(sample)) return "";
+  if (!sample.label_work_blend && !sample.guide?.editable) return "";
+  const guide = sample.guide || {};
   return `
     <div class="final-action-row">
       <button
@@ -1333,7 +1362,13 @@ function verifiedExportAction(sample, activeJob) {
       >
         Export Verified Label
       </button>
-      <span>Use this after saving the corrected guide in Blender.</span>
+      <span>
+        ${
+          guide.edited
+            ? "Exports your saved browser skeleton edits. No Blender needed."
+            : "Use this after saving skeleton edits in the browser or correcting the guide in Blender."
+        }
+      </span>
     </div>
   `;
 }
@@ -1368,6 +1403,7 @@ function sampleDetailKey(sample) {
     face_limit: sample.face_limit,
     tripo_task_id: sample.tripo_task_id,
     label_work_blend: sample.label_work_blend,
+    guide: sample.guide || {},
     batches: sample.batches || [],
     model: sample.model || {},
     reference_images: sample.reference_images || {},
@@ -1407,7 +1443,7 @@ function renderSampleDetail() {
   const renderKey = sampleDetailKey(sample);
   if (
     elements.sampleDetail.dataset.sampleId === sample.sample_id &&
-    elements.sampleDetail.dataset.renderKey === renderKey
+    (elements.sampleDetail.dataset.renderKey === renderKey || window.NitoThreeViewer?.hasActiveEdits?.())
   ) {
     hydrateModelViewers(elements.sampleDetail);
     return;
@@ -1828,6 +1864,8 @@ elements.sampleDetail.addEventListener("click", async (event) => {
     try {
       if (actionButtonElement.dataset.sampleAction === "open-blender") {
         await openBlenderSample(actionButtonElement.dataset.sampleId);
+      } else if (actionButtonElement.dataset.sampleAction === "edit-skeleton") {
+        openSkeletonEditor();
       } else {
         await startSampleAction(actionButtonElement.dataset.sampleId, actionButtonElement.dataset.sampleAction);
       }
@@ -1864,6 +1902,23 @@ elements.jobList.addEventListener("click", async (event) => {
   await loadJobLog(button.dataset.jobId);
 });
 window.addEventListener("popstate", render);
+
+function openSkeletonEditor() {
+  const viewer = elements.sampleDetail.querySelector(".three-editor[data-guide-api]");
+  if (!viewer) {
+    elements.statusLine.textContent = "The 3D viewer is not ready yet; wait for the model to load.";
+    return;
+  }
+  viewer.scrollIntoView({ behavior: "smooth", block: "center" });
+  const editButton = viewer.querySelector('button[data-three-action="edit"]');
+  if (editButton && !editButton.classList.contains("is-active")) {
+    editButton.click();
+  }
+}
+
+window.addEventListener("nito-guide-saved", () => {
+  loadState().catch(() => {});
+});
 
 setInterval(async () => {
   try {

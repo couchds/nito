@@ -9,9 +9,20 @@ The repo includes the Nito Blender Tools add-on for manual guide placement and r
 1. Create a sample from a prompt or from the quadruped prompt catalog.
 2. Generate left, right, front, and back reference art with OpenAI image generation, passing earlier views into later views for consistency.
 3. Submit the generated views to Tripo3D to create a 3D model.
-4. Open the prepared Blender file and place or correct the skeleton guides manually.
-5. Export verified labels for future model training.
+4. Correct the skeleton guide in the browser skeleton editor on the sample page, or open the prepared Blender file for manual placement.
+5. Export verified labels for future model training. Saved browser edits export without Blender.
 6. Train and evaluate a guide initializer that predicts skeleton landmarks and animal/body-plan labels for unseen meshes.
+
+## Browser Skeleton Editor
+
+The sample detail page's 3D viewport includes an **Edit Skeleton** mode, which is the primary way to correct guide placement:
+
+1. The automated pipeline prepares the label-work Blender file and also dumps a canonical guide JSON plus canonical mesh OBJ for the browser.
+2. Click **Edit Skeleton** in the viewer toolbar (or the **Edit Skeleton in Browser** pipeline button). Drag the joint spheres to correct landmarks. Left/Right/Front/Rear/Top buttons snap the camera to review angles, **Mirror** keeps left/right leg pairs symmetric, and Ctrl+Z undoes.
+3. Click **Save Skeleton**. Edits are stored as `web_guide_edits.json` in the sample's work directory.
+4. Click **Export Verified Label**. When saved browser edits exist, the export runs entirely in Python from the canonical mesh and the saved edits, so Blender is not needed after model prep.
+
+Samples prepared before this feature have a label blend but no browser guide dump; use the **Extract Guide for Web Editing** pipeline action (or `automated_training_workflow.py extract-guide`) to run Blender once and produce the editable files. Blender editing still works: skip saving browser edits, correct the guide in Blender, and export as before (or pass `--ignore-web-edits` to force the Blender guide).
 
 ## Blender Add-on
 
@@ -122,12 +133,10 @@ Nito does not use synthetic samples for training. Training data comes from manua
 The intended training flow is:
 
 1. Create a prompt-backed sample in the Nito web UI.
-2. Open the prepared Blender label file from the sample page.
-3. Manually place or correct the Nito guide.
-4. Save the Blender file.
-5. Export the sample with **Export Verified Label**.
-6. Add the verified sample to a batch.
-7. Train from that labeled batch on the Jobs page.
+2. Correct the Nito guide in the browser skeleton editor and click **Save Skeleton** (or open the prepared Blender label file and edit there).
+3. Export the sample with **Export Verified Label**.
+4. Add the verified sample to a batch.
+5. Train from that labeled batch on the Jobs page.
 
 Verified labels are treated as ground truth. Use `scripts/export_qwalk_guide_label.py --verified` only after the guide placement has been visually reviewed and corrected in Blender. Candidate labels can still be exported for inspection, but they should not be used for model training.
 
@@ -192,7 +201,7 @@ Start Nito when you want a dashboard over the same batch runner:
 
 Then open `http://127.0.0.1:8765`. The Home page shows actively running UI jobs and samples that have not reached the verified training-export state yet. Nito uses route-backed pages for `/samples`, `/samples/<sample_id>`, `/batches`, `/batches/<run_id>`, `/create`, `/jobs`, and `/settings`, so detail pages can be opened directly.
 
-Use the Create page to make a prompt-backed sample with a two-step flow: enter the character prompt, then choose the skeleton/body type from the visual cards. Creating a sample immediately starts the automatic machine pipeline: sequential OpenAI reference views, Tripo generation, model download, and Blender label-file prep. Nito then pauses for the only manual step: opening the prepared Blender file and placing/correcting the skeleton guide. The original prompt and generated front/left/right/back OpenAI prompts are stored in the sample workflow state. Each sample detail page shows the expected rig family, bone chains, an anatomical placement diagram, placement guidance for the guide bones, pipeline state, reference images, Blender review renders, and downloaded GLB/GLTF model when those artifacts exist. After a verified label is exported, the 3D viewport adds a **Skeleton** toggle and loads the exported canonical OBJ label mesh so the overlay matches the Blender label-work coordinate frame. Batches remain candidate training sets, and a sample can appear in multiple batches because membership is computed from saved batch summaries.
+Use the Create page to make a prompt-backed sample with a two-step flow: enter the character prompt, then choose the skeleton/body type from the visual cards. Creating a sample immediately starts the automatic machine pipeline: sequential OpenAI reference views, Tripo generation, model download, and Blender label-file prep. Nito then pauses for the only manual step: correcting the skeleton guide, normally in the browser skeleton editor on the sample page, with Blender as a fallback. The original prompt and generated front/left/right/back OpenAI prompts are stored in the sample workflow state. Each sample detail page shows the expected rig family, bone chains, an anatomical placement diagram, placement guidance for the guide bones, pipeline state, reference images, Blender review renders, and downloaded GLB/GLTF model when those artifacts exist. After a verified label is exported, the 3D viewport adds a **Skeleton** toggle and loads the exported canonical OBJ label mesh so the overlay matches the Blender label-work coordinate frame. Batches remain candidate training sets, and a sample can appear in multiple batches because membership is computed from saved batch summaries.
 
 Tripo submission uses the saved OpenAI reference images directly. `submit-tripo` uploads the local `front`, `left`, `right`, and `back` files, sends them to Tripo in the required `front`, `left`, `back`, `right` order, and stores the returned model task id in the sample workflow state.
 

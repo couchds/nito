@@ -10,34 +10,12 @@ from pathlib import Path
 import bpy
 from mathutils import Vector
 
-
-GUIDE_BONE_NAMES = [
-    "qwg_guide_pelvis",
-    "qwg_guide_spine",
-    "qwg_guide_chest",
-    "qwg_guide_neck",
-    "qwg_guide_head",
-    "qwg_guide_tail",
-    "qwg_guide_front_left_upper",
-    "qwg_guide_front_left_lower",
-    "qwg_guide_front_left_foot",
-    "qwg_guide_front_right_upper",
-    "qwg_guide_front_right_lower",
-    "qwg_guide_front_right_foot",
-    "qwg_guide_rear_left_upper",
-    "qwg_guide_rear_left_lower",
-    "qwg_guide_rear_left_foot",
-    "qwg_guide_rear_right_upper",
-    "qwg_guide_rear_right_lower",
-    "qwg_guide_rear_right_foot",
-]
-
-LEG_PREFIXES = {
-    "fl": ("front_left", "qwg_guide_front_left_upper", "qwg_guide_front_left_lower", "qwg_guide_front_left_foot"),
-    "fr": ("front_right", "qwg_guide_front_right_upper", "qwg_guide_front_right_lower", "qwg_guide_front_right_foot"),
-    "rl": ("rear_left", "qwg_guide_rear_left_upper", "qwg_guide_rear_left_lower", "qwg_guide_rear_left_foot"),
-    "rr": ("rear_right", "qwg_guide_rear_right_upper", "qwg_guide_rear_right_lower", "qwg_guide_rear_right_foot"),
-}
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from qwalk_label_common import (
+    GUIDE_BONE_NAMES,
+    build_label_metadata,
+    write_manifest_and_info,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -132,73 +110,6 @@ def export_guide_bones(guide: bpy.types.Object, forward_axis: str) -> dict[str, 
     return guide_bones
 
 
-def landmarks_from_guide_bones(guide_bones: dict[str, dict[str, list[float]]]) -> dict[str, list[float]]:
-    landmarks = {
-        "pelvis": guide_bones["qwg_guide_pelvis"]["head"],
-        "spine": guide_bones["qwg_guide_spine"]["tail"],
-        "chest": guide_bones["qwg_guide_chest"]["tail"],
-        "neck": guide_bones["qwg_guide_neck"]["tail"],
-        "head": guide_bones["qwg_guide_head"]["tail"],
-        "tail": guide_bones["qwg_guide_tail"]["tail"],
-    }
-    for _, (prefix, upper, lower, foot) in LEG_PREFIXES.items():
-        landmarks[f"{prefix}_upper"] = guide_bones[upper]["head"]
-        landmarks[f"{prefix}_mid"] = guide_bones[upper]["tail"]
-        landmarks[f"{prefix}_lower"] = guide_bones[lower]["tail"]
-        landmarks[f"{prefix}_foot"] = guide_bones[foot]["tail"]
-    return landmarks
-
-
-def write_manifest_and_info(out_dir: Path, metadata: dict) -> None:
-    """Upsert one exported label into the real dataset manifest and summary."""
-    manifest_path = out_dir / "manifest.jsonl"
-    records = []
-    if manifest_path.exists():
-        for line in manifest_path.read_text(encoding="utf-8").splitlines():
-            if not line.strip():
-                continue
-            record = json.loads(line)
-            if record.get("id") != metadata["id"]:
-                records.append(record)
-    records.append(metadata)
-    manifest_path.write_text(
-        "".join(json.dumps(record, separators=(",", ":")) + "\n" for record in records),
-        encoding="utf-8",
-    )
-
-    animal_types = []
-    morphology_types = []
-    animal_counts = {}
-    split_counts = {}
-    verified_count = 0
-    for record in records:
-        animal = record["animal_type"]
-        morphology = record["morphology_type"]
-        if animal not in animal_types:
-            animal_types.append(animal)
-        if morphology not in morphology_types:
-            morphology_types.append(morphology)
-        animal_counts[animal] = animal_counts.get(animal, 0) + 1
-        split_counts[record["split"]] = split_counts.get(record["split"], 0) + 1
-        verified_count += 1 if record.get("verified_label", False) else 0
-
-    dataset_info = {
-        "source": "real_qwalk_labels",
-        "count": len(records),
-        "verified_count": verified_count,
-        "animal_counts": animal_counts,
-        "split_counts": split_counts,
-        "label_schema": {
-            "animal_type": animal_types,
-            "morphology_type": morphology_types,
-            "guide_bones": "QWalk guide bone head/tail coordinates in mesh space",
-            "landmarks": "Simplified joint/centerline landmarks derived from guide_bones",
-            "axes": "forward, left, and up vectors in mesh space",
-        },
-    }
-    (out_dir / "dataset_info.json").write_text(json.dumps(dataset_info, indent=2) + "\n", encoding="utf-8")
-
-
 def main() -> None:
     args = parse_args()
     mesh = resolve_object(args.mesh, "MESH")
@@ -211,21 +122,15 @@ def main() -> None:
 
     write_obj(mesh, obj_path, args.mesh_forward_axis)
     guide_bones = export_guide_bones(guide, args.mesh_forward_axis)
-    metadata = {
-        "id": args.id,
-        "source": args.source,
-        "verified_label": args.verified,
-        "training_eligible": args.verified,
-        "animal_type": args.animal_type,
-        "morphology_type": args.morphology_type,
-        "axes": {
-            "forward": [0.0, 1.0, 0.0],
-            "left": [1.0, 0.0, 0.0],
-            "up": [0.0, 0.0, 1.0],
-        },
-        "guide_bones": guide_bones,
-        "landmarks": landmarks_from_guide_bones(guide_bones),
-        "parameters": {
+    metadata = build_label_metadata(
+        sample_id=args.id,
+        source=args.source,
+        verified=args.verified,
+        animal_type=args.animal_type,
+        morphology_type=args.morphology_type,
+        guide_bones=guide_bones,
+        split=args.split,
+        parameters={
             "blend_file": bpy.data.filepath,
             "mesh_object": mesh.name,
             "guide_object": guide.name,
@@ -236,10 +141,7 @@ def main() -> None:
                 else "Candidate label; inspect and correct before using for training."
             ),
         },
-        "split": args.split,
-        "mesh_file": f"{args.split}/{args.id}.obj",
-        "label_file": f"{args.split}/{args.id}.json",
-    }
+    )
     json_path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
     write_manifest_and_info(out_dir, metadata)
     print(f"Exported real QWalk label {args.id} to {json_path}")

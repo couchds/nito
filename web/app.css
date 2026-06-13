@@ -2131,6 +2131,96 @@ textarea:focus {
   color: #fffaf0;
 }
 
+.three-toolbar button[data-three-action="edit"].is-active {
+  border-color: rgba(240, 179, 95, 0.7);
+  background:
+    linear-gradient(135deg, rgba(240, 179, 95, 0.3), rgba(98, 208, 196, 0.18)),
+    rgba(247, 239, 224, 0.08);
+  color: #fffaf0;
+}
+
+.skeleton-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid rgba(240, 179, 95, 0.32);
+  border-top: none;
+  background:
+    linear-gradient(180deg, rgba(240, 179, 95, 0.08), rgba(247, 239, 224, 0.02)),
+    rgba(7, 9, 9, 0.92);
+}
+
+.skeleton-editor-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.skeleton-editor-row strong {
+  color: var(--bone, #f7efe0);
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.editor-joint-label {
+  color: rgba(247, 239, 224, 0.78);
+  font-size: 12px;
+  text-transform: capitalize;
+}
+
+.skeleton-editor-actions {
+  justify-content: flex-start;
+}
+
+.editor-view-buttons {
+  display: inline-flex;
+  gap: 4px;
+  margin-right: 8px;
+}
+
+.skeleton-editor button {
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid rgba(247, 239, 224, 0.18);
+  border-radius: 5px;
+  background: rgba(247, 239, 224, 0.08);
+  color: var(--bone, #f7efe0);
+  box-shadow: none;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.skeleton-editor button:hover,
+.skeleton-editor button.is-active {
+  border-color: rgba(210, 167, 95, 0.56);
+  background: rgba(183, 138, 69, 0.28);
+  color: #ffffff;
+  transform: none;
+}
+
+.skeleton-editor button.editor-save {
+  border-color: rgba(98, 208, 196, 0.5);
+  background: rgba(98, 208, 196, 0.16);
+}
+
+.skeleton-editor button.editor-save:hover {
+  border-color: rgba(98, 208, 196, 0.8);
+  background: rgba(98, 208, 196, 0.3);
+}
+
+.editor-status {
+  margin: 0;
+  min-height: 16px;
+  color: rgba(247, 239, 224, 0.66);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 .three-stage {
   position: relative;
   width: 100%;

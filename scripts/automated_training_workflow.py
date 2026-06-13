@@ -12,6 +12,7 @@ import base64
 import json
 import os
 import random
+import shutil
 import subprocess
 import sys
 import time
@@ -196,6 +197,18 @@ def parse_args() -> argparse.Namespace:
     export.add_argument("--label-blend", default="", help="Blend file containing the corrected guide.")
     export.add_argument("--verified", action=argparse.BooleanOptionalAction, default=False)
     export.add_argument("--split", default="train", choices=("train", "val", "test"))
+    export.add_argument(
+        "--ignore-web-edits",
+        action="store_true",
+        help="Export from the Blender guide even when saved web skeleton edits exist.",
+    )
+
+    extract = subparsers.add_parser(
+        "extract-guide",
+        help="Dump the current guide and canonical mesh from the label-work blend for the web skeleton editor.",
+    )
+    extract.add_argument("--sample-id", required=True)
+    extract.add_argument("--blender", default=os.environ.get("BLENDER_EXE", DEFAULT_BLENDER))
 
     status = subparsers.add_parser("status", help="Print state for one sample.")
     status.add_argument("--sample-id", required=True)
@@ -820,6 +833,50 @@ def require_created_file(path: Path, label: str) -> None:
         raise RuntimeError(f"{label} was not created: {path}")
 
 
+def guide_workfile_paths(directory: Path, sample_id: str) -> tuple[Path, Path]:
+    return (
+        directory / f"{sample_id}_guide_candidate.json",
+        directory / f"{sample_id}_canonical_mesh.obj",
+    )
+
+
+def web_guide_edits_path(directory: Path) -> Path:
+    return directory / "web_guide_edits.json"
+
+
+def dump_guide_workfiles(
+    blender: str,
+    label_blend: Path,
+    guide_name: str,
+    mesh_name: str,
+    guide_json: Path,
+    mesh_obj: Path,
+) -> None:
+    """Dump the canonical guide JSON and mesh OBJ used by the web skeleton editor."""
+    run(
+        [
+            blender,
+            "--background",
+            str(label_blend),
+            "--python",
+            str(REPO_ROOT / "scripts" / "export_qwalk_guide_json.py"),
+            "--",
+            "--guide",
+            guide_name,
+            "--out",
+            str(guide_json),
+            "--mesh",
+            mesh_name,
+            "--mesh-out",
+            str(mesh_obj),
+            "--mesh-forward-axis",
+            "POS_Y",
+        ]
+    )
+    require_created_file(guide_json, "Guide candidate JSON")
+    require_created_file(mesh_obj, "Canonical mesh OBJ")
+
+
 def checkpoint_real_sample_count(path: Path) -> int:
     if not path.exists():
         return 0
@@ -1414,10 +1471,22 @@ def command_prepare_label_work(args: argparse.Namespace) -> None:
     if missing:
         missing_list = ", ".join(str(path) for path in missing)
         raise RuntimeError(f"Review rendering did not produce expected outputs: {missing_list}")
+
+    guide_candidate_json, canonical_mesh_obj = guide_workfile_paths(directory, args.sample_id)
+    dump_guide_workfiles(blender, label_blend, guide_name, mesh_name, guide_candidate_json, canonical_mesh_obj)
+    # A fresh candidate replaces any earlier browser edits, which may target a stale frame.
+    stale_edits = web_guide_edits_path(directory)
+    if stale_edits.exists():
+        stale_edits.unlink()
+    state.pop("web_guide_edits", None)
+    state.pop("web_guide_edited_at", None)
+
     state.update(
         {
             "imported_blend": str(source_blend),
             "label_work_blend": str(label_blend),
+            "guide_candidate_json": str(guide_candidate_json),
+            "canonical_mesh_obj": str(canonical_mesh_obj),
             "label_mesh": mesh_name,
             "label_guide": guide_name,
             "source_mesh_forward_axis": source_axis,
@@ -1438,8 +1507,91 @@ def command_prepare_label_work(args: argparse.Namespace) -> None:
     print(f"Review candidate: {review_dir}")
 
 
+def command_extract_guide(args: argparse.Namespace) -> None:
+    state = load_state(args.work_root, args.sample_id)
+    directory = sample_dir(args.work_root, args.sample_id)
+    blender = blender_exe(args.blender)
+    label_blend = Path(state.get("label_work_blend", ""))
+    if not label_blend.exists():
+        raise FileNotFoundError(f"Label-work blend not found; run prepare-label-work first. Got: {label_blend}")
+    mesh_name = state.get("label_mesh") or f"{args.sample_id}_Mesh"
+    guide_name = state.get("label_guide", "")
+    guide_json, mesh_obj = guide_workfile_paths(directory, args.sample_id)
+    dump_guide_workfiles(blender, label_blend, guide_name, mesh_name, guide_json, mesh_obj)
+    state["guide_candidate_json"] = str(guide_json)
+    state["canonical_mesh_obj"] = str(mesh_obj)
+    save_state(args.work_root, args.sample_id, state)
+    print(f"Extracted web-editable guide: {guide_json}")
+
+
+def export_verified_from_web_edits(args: argparse.Namespace, state: dict[str, Any], edits_path: Path) -> None:
+    """Export a label directly from saved web skeleton edits without Blender."""
+    sys.path.insert(0, str(REPO_ROOT / "scripts"))
+    from qwalk_label_common import build_label_metadata, validate_guide_bones, write_manifest_and_info
+
+    directory = sample_dir(args.work_root, args.sample_id)
+    canonical_obj = Path(state.get("canonical_mesh_obj", ""))
+    if not canonical_obj.exists():
+        _, canonical_obj = guide_workfile_paths(directory, args.sample_id)
+    if not canonical_obj.exists():
+        raise RuntimeError(
+            "Canonical mesh OBJ is missing; run extract-guide (or rerun prepare-label-work) before exporting web edits."
+        )
+
+    edits = json.loads(edits_path.read_text(encoding="utf-8"))
+    if str(edits.get("coordinate_space") or "canonical") != "canonical":
+        raise ValueError("Web guide edits must use canonical coordinate space.")
+    guide_bones = validate_guide_bones(edits.get("guide_bones") or {})
+
+    out_dir = REPO_ROOT / "data" / "real_quadrupeds"
+    split_dir = out_dir / args.split
+    split_dir.mkdir(parents=True, exist_ok=True)
+    obj_path = split_dir / f"{args.sample_id}.obj"
+    json_path = split_dir / f"{args.sample_id}.json"
+    shutil.copyfile(canonical_obj, obj_path)
+
+    metadata = build_label_metadata(
+        sample_id=args.sample_id,
+        source="real_qwalk_label_gold_automated",
+        verified=bool(args.verified),
+        animal_type=state["animal_type"],
+        morphology_type=state["morphology_type"],
+        guide_bones=guide_bones,
+        split=args.split,
+        parameters={
+            "blend_file": state.get("label_work_blend", ""),
+            "mesh_object": state.get("label_mesh", ""),
+            "guide_object": state.get("label_guide", ""),
+            "source_mesh_forward_axis": "POS_Y",
+            "guide_edit_source": "nito_web_editor",
+            "label_note": (
+                "Reviewed ground-truth label."
+                if args.verified
+                else "Candidate label; inspect and correct before using for training."
+            ),
+        },
+    )
+    json_path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+    write_manifest_and_info(out_dir, metadata)
+
+    state["status"] = "verified_exported" if args.verified else "candidate_exported"
+    state["export_verified"] = bool(args.verified)
+    state["training_eligible"] = bool(args.verified)
+    state["export_split"] = args.split
+    state["export_label"] = str(json_path)
+    state["export_mesh"] = str(obj_path)
+    state["export_source"] = "web_editor"
+    save_state(args.work_root, args.sample_id, state)
+    print(f"Exported label from web skeleton edits: {json_path}")
+
+
 def command_export_verified(args: argparse.Namespace) -> None:
     state = load_state(args.work_root, args.sample_id)
+    directory = sample_dir(args.work_root, args.sample_id)
+    edits_path = web_guide_edits_path(directory)
+    if edits_path.exists() and not args.ignore_web_edits:
+        export_verified_from_web_edits(args, state, edits_path)
+        return
     blender = blender_exe(args.blender)
     label_blend = Path(args.label_blend).expanduser().resolve() if args.label_blend else Path(state["label_work_blend"])
     mesh = state["label_mesh"]
@@ -1485,6 +1637,7 @@ def command_export_verified(args: argparse.Namespace) -> None:
     state["export_split"] = args.split
     state["export_label"] = str(label_file)
     state["export_mesh"] = str(mesh_file)
+    state["export_source"] = "blender"
     save_state(args.work_root, args.sample_id, state)
 
 
@@ -1503,6 +1656,7 @@ def main() -> None:
         "poll-tripo": command_poll_tripo,
         "prepare-label-work": command_prepare_label_work,
         "export-verified": command_export_verified,
+        "extract-guide": command_extract_guide,
         "status": command_status,
     }
     handlers[args.command](args)

@@ -7,6 +7,72 @@ const cameraMemory = new Map();
 const REMOTE_LOAD_TIMEOUT_MS = 9000;
 const PROXY_LOAD_TIMEOUT_MS = 7000;
 
+const LEG_SIDES = ["front_left", "front_right", "rear_left", "rear_right"];
+
+// Canonical guide topology. Joints are shared between connected bones so a
+// drag keeps every chain attached, matching the trainer's reconstruction.
+const GUIDE_JOINT_SPECS = [
+  ["pelvis_head", "qwg_guide_pelvis", "head"],
+  ["pelvis_tail", "qwg_guide_pelvis", "tail"],
+  ["spine_tail", "qwg_guide_spine", "tail"],
+  ["chest_tail", "qwg_guide_chest", "tail"],
+  ["neck_tail", "qwg_guide_neck", "tail"],
+  ["head_tail", "qwg_guide_head", "tail"],
+  ["tail_head", "qwg_guide_tail", "head"],
+  ["tail_tail", "qwg_guide_tail", "tail"],
+  ...LEG_SIDES.flatMap((side) => [
+    [`${side}_upper_head`, `qwg_guide_${side}_upper`, "head"],
+    [`${side}_mid`, `qwg_guide_${side}_upper`, "tail"],
+    [`${side}_lower`, `qwg_guide_${side}_lower`, "tail"],
+    [`${side}_foot`, `qwg_guide_${side}_foot`, "tail"],
+  ]),
+];
+
+const GUIDE_EDITOR_BONES = {
+  qwg_guide_pelvis: ["pelvis_head", "pelvis_tail"],
+  qwg_guide_spine: ["pelvis_tail", "spine_tail"],
+  qwg_guide_chest: ["spine_tail", "chest_tail"],
+  qwg_guide_neck: ["chest_tail", "neck_tail"],
+  qwg_guide_head: ["neck_tail", "head_tail"],
+  qwg_guide_tail: ["tail_head", "tail_tail"],
+};
+LEG_SIDES.forEach((side) => {
+  GUIDE_EDITOR_BONES[`qwg_guide_${side}_upper`] = [`${side}_upper_head`, `${side}_mid`];
+  GUIDE_EDITOR_BONES[`qwg_guide_${side}_lower`] = [`${side}_mid`, `${side}_lower`];
+  GUIDE_EDITOR_BONES[`qwg_guide_${side}_foot`] = [`${side}_lower`, `${side}_foot`];
+});
+
+const GUIDE_JOINT_HINTS = {
+  pelvis_head: "Hip block, just forward of the tail base, inside the body.",
+  pelvis_tail: "Lumbar back where the rump joins the spine.",
+  spine_tail: "Middle/front of the rib cage on the centerline.",
+  chest_tail: "Withers / upper chest at the base of the neck.",
+  neck_tail: "Base of skull, behind the ears.",
+  head_tail: "Through the center of the skull or muzzle.",
+  tail_head: "Where the tail exits the rump.",
+  tail_tail: "Along the bony tail core; ignore fur.",
+  upper_head: "Inside the body where the leg enters the torso.",
+  mid: "Elbow (front) or stifle/knee (rear): the first big bend.",
+  lower: "Wrist/carpus (front) or hock/ankle (rear), above the foot.",
+  foot: "Toe/hoof ground-contact direction.",
+};
+
+function guideJointLabel(name) {
+  return name.replace(/_/g, " ");
+}
+
+function guideJointHint(name) {
+  if (GUIDE_JOINT_HINTS[name]) return GUIDE_JOINT_HINTS[name];
+  const suffix = ["upper_head", "mid", "lower", "foot"].find((part) => name.endsWith(part));
+  return suffix ? GUIDE_JOINT_HINTS[suffix] : "";
+}
+
+function mirrorJointName(name) {
+  if (name.includes("_left_")) return name.replace("_left_", "_right_");
+  if (name.includes("_right_")) return name.replace("_right_", "_left_");
+  return "";
+}
+
 class NitoThreeViewport {
   constructor(root) {
     this.root = root;
@@ -18,6 +84,8 @@ class NitoThreeViewport {
     this.fallbackSrc = root.dataset.fallbackSrc || "";
     this.labelSrc = root.dataset.labelSrc || "";
     this.labelMeshSrc = root.dataset.labelMeshSrc || "";
+    this.guideApiUrl = root.dataset.guideApi || "";
+    this.editor = null;
     this.model = null;
     this.labelGroup = null;
     this.labelBoneCount = 0;
@@ -113,9 +181,33 @@ class NitoThreeViewport {
         this.controls.autoRotate = !this.controls.autoRotate;
         button.classList.toggle("is-active", this.controls.autoRotate);
       }
+      if (action === "edit") {
+        this.toggleSkeletonEditor(button);
+      }
+    });
+
+    this.root.addEventListener("click", (event) => {
+      const button = event.target.closest("button[data-editor-action]");
+      if (!button || !this.editor) return;
+      this.handleEditorAction(button.dataset.editorAction, button);
     });
 
     this.controls.addEventListener("end", () => this.rememberCamera());
+
+    // Capture phase so joint drags win over OrbitControls' own pointer handlers.
+    const canvas = this.renderer.domElement;
+    canvas.addEventListener("pointerdown", (event) => this.onEditorPointerDown(event), { capture: true });
+    canvas.addEventListener("pointermove", (event) => this.onEditorPointerMove(event), { capture: true });
+    canvas.addEventListener("pointerup", (event) => this.onEditorPointerUp(event), { capture: true });
+    canvas.addEventListener("pointerleave", (event) => this.onEditorPointerUp(event), { capture: true });
+    this.editorKeyHandler = (event) => {
+      if (!this.editor) return;
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
+        event.preventDefault();
+        this.editorUndo();
+      }
+    };
+    window.addEventListener("keydown", this.editorKeyHandler);
   }
 
   async load() {
@@ -575,6 +667,408 @@ class NitoThreeViewport {
     this.labelGroup = null;
   }
 
+  canonicalToScene(point) {
+    const { center, scale } = this.modelCoordinateTransform;
+    return new THREE.Vector3(point.x, point.z, point.y).sub(center).multiplyScalar(scale);
+  }
+
+  sceneToCanonical(vector) {
+    const { center, scale } = this.modelCoordinateTransform;
+    const model = vector.clone().divideScalar(scale).add(center);
+    return new THREE.Vector3(model.x, model.z, model.y);
+  }
+
+  async toggleSkeletonEditor(button) {
+    if (this.editor) {
+      this.disableSkeletonEditor();
+      button?.classList.remove("is-active");
+      return;
+    }
+    const enabled = await this.enableSkeletonEditor();
+    button?.classList.toggle("is-active", enabled);
+  }
+
+  async enableSkeletonEditor() {
+    if (!this.guideApiUrl) return false;
+    if (!this.frame || !this.modelCoordinateTransform || !this.labelCoordinatesMatchModel) {
+      this.setStatus("Skeleton editing needs the canonical mesh; wait for it to load or run guide extraction.");
+      return false;
+    }
+    this.setStatus("Loading editable skeleton");
+    let payload;
+    try {
+      const response = await fetch(this.guideApiUrl, { cache: "no-store" });
+      payload = await response.json();
+      if (!response.ok) throw new Error(payload?.error || `Guide returned HTTP ${response.status}`);
+    } catch (error) {
+      this.setStatus(`Skeleton editor failed to load: ${error.message}`);
+      return false;
+    }
+
+    const joints = this.jointsFromGuideBones(payload.guide_bones);
+    if (!joints) {
+      this.setStatus("Guide JSON is missing required bones; cannot edit.");
+      return false;
+    }
+
+    this.controls.autoRotate = false;
+    if (this.labelGroup) this.labelGroup.visible = false;
+
+    this.editor = {
+      joints,
+      initialJoints: this.cloneJoints(joints),
+      undoStack: [],
+      mirror: true,
+      dirty: false,
+      source: payload.source || "",
+      dragJoint: "",
+      dragPlane: new THREE.Plane(),
+      hoverJoint: "",
+      group: null,
+      jointMeshes: new Map(),
+      boneMeshes: new Map(),
+      raycaster: new THREE.Raycaster(),
+      pointer: new THREE.Vector2(),
+    };
+    this.buildEditorGroup();
+    this.buildEditorPanel();
+    this.updateEditorStatus(
+      payload.source === "web_edits" ? "Loaded saved browser edits." : `Loaded ${payload.source || "candidate"} guide.`,
+    );
+    this.setStatus("Skeleton editing: drag joints, use the view buttons, then save.");
+    return true;
+  }
+
+  disableSkeletonEditor() {
+    if (!this.editor) return;
+    if (this.editor.group) {
+      this.scene.remove(this.editor.group);
+      this.disposeObject(this.editor.group);
+    }
+    this.root.querySelector("[data-editor-panel]")?.remove();
+    this.renderer.domElement.style.cursor = "";
+    this.editor = null;
+    this.controls.enabled = true;
+    if (this.labelGroup) this.labelGroup.visible = this.labelsVisible;
+    this.setStatus(this.modelStatus || "Model ready");
+  }
+
+  jointsFromGuideBones(guideBones) {
+    if (!guideBones || typeof guideBones !== "object") return null;
+    const joints = new Map();
+    for (const [jointName, boneName, endpoint] of GUIDE_JOINT_SPECS) {
+      const values = guideBones?.[boneName]?.[endpoint];
+      if (!Array.isArray(values) || values.length < 3 || !values.every((value) => Number.isFinite(Number(value)))) {
+        return null;
+      }
+      joints.set(jointName, new THREE.Vector3(Number(values[0]), Number(values[1]), Number(values[2])));
+    }
+    return joints;
+  }
+
+  serializeGuideBones() {
+    const bones = {};
+    for (const [boneName, [headJoint, tailJoint]] of Object.entries(GUIDE_EDITOR_BONES)) {
+      const head = this.editor.joints.get(headJoint);
+      const tail = this.editor.joints.get(tailJoint);
+      bones[boneName] = {
+        head: [head.x, head.y, head.z].map((value) => Number(value.toFixed(6))),
+        tail: [tail.x, tail.y, tail.z].map((value) => Number(value.toFixed(6))),
+      };
+    }
+    return bones;
+  }
+
+  cloneJoints(joints) {
+    const copy = new Map();
+    joints.forEach((value, key) => copy.set(key, value.clone()));
+    return copy;
+  }
+
+  buildEditorGroup() {
+    const editor = this.editor;
+    if (editor.group) {
+      this.scene.remove(editor.group);
+      this.disposeObject(editor.group);
+    }
+    const group = new THREE.Group();
+    group.name = "NitoSkeletonEditor";
+    const targetRadius = Math.max(this.frame.box.getSize(new THREE.Vector3()).length(), 1);
+    const boneRadius = THREE.MathUtils.clamp(targetRadius * 0.005, 0.01, 0.035);
+    const jointRadius = boneRadius * 2.6;
+    editor.jointRadius = jointRadius;
+
+    editor.boneMeshes.clear();
+    const unitCylinder = new THREE.CylinderGeometry(boneRadius, boneRadius, 1, 12, 1, false);
+    for (const boneName of Object.keys(GUIDE_EDITOR_BONES)) {
+      const material = new THREE.MeshBasicMaterial({
+        color: this.labelBoneColor(boneName),
+        depthTest: false,
+        transparent: true,
+        opacity: 0.85,
+      });
+      const mesh = new THREE.Mesh(unitCylinder, material);
+      mesh.renderOrder = 11;
+      group.add(mesh);
+      editor.boneMeshes.set(boneName, mesh);
+    }
+
+    editor.jointMeshes.clear();
+    const sphereGeometry = new THREE.SphereGeometry(jointRadius, 18, 12);
+    editor.joints.forEach((_, jointName) => {
+      const material = new THREE.MeshBasicMaterial({
+        color: this.editorJointColor(jointName),
+        depthTest: false,
+        transparent: true,
+        opacity: 0.95,
+      });
+      const mesh = new THREE.Mesh(sphereGeometry, material);
+      mesh.renderOrder = 13;
+      mesh.userData.jointName = jointName;
+      group.add(mesh);
+      editor.jointMeshes.set(jointName, mesh);
+    });
+
+    editor.group = group;
+    this.scene.add(group);
+    this.refreshEditorScene();
+  }
+
+  editorJointColor(jointName) {
+    if (jointName.includes("_left_") || jointName.startsWith("front_left") || jointName.startsWith("rear_left")) {
+      return 0x4fd9c8;
+    }
+    if (jointName.includes("_right_") || jointName.startsWith("front_right") || jointName.startsWith("rear_right")) {
+      return 0xf2a64d;
+    }
+    return 0xf5e9cf;
+  }
+
+  refreshEditorScene() {
+    const editor = this.editor;
+    if (!editor?.group) return;
+    editor.joints.forEach((canonical, jointName) => {
+      editor.jointMeshes.get(jointName).position.copy(this.canonicalToScene(canonical));
+    });
+    const up = new THREE.Vector3(0, 1, 0);
+    for (const [boneName, [headJoint, tailJoint]] of Object.entries(GUIDE_EDITOR_BONES)) {
+      const mesh = editor.boneMeshes.get(boneName);
+      const start = editor.jointMeshes.get(headJoint).position;
+      const end = editor.jointMeshes.get(tailJoint).position;
+      const direction = end.clone().sub(start);
+      const length = Math.max(direction.length(), 0.0001);
+      mesh.position.copy(start).add(end).multiplyScalar(0.5);
+      mesh.scale.set(1, length, 1);
+      mesh.quaternion.setFromUnitVectors(up, direction.normalize());
+    }
+  }
+
+  buildEditorPanel() {
+    this.root.querySelector("[data-editor-panel]")?.remove();
+    const panel = document.createElement("div");
+    panel.className = "skeleton-editor";
+    panel.dataset.editorPanel = "true";
+    panel.innerHTML = `
+      <div class="skeleton-editor-row">
+        <strong>Skeleton editor</strong>
+        <span class="editor-joint-label" data-editor-joint>Hover a joint</span>
+      </div>
+      <div class="skeleton-editor-row skeleton-editor-actions">
+        <span class="editor-view-buttons">
+          <button type="button" data-editor-action="view-left" title="Left profile">Left</button>
+          <button type="button" data-editor-action="view-right" title="Right profile">Right</button>
+          <button type="button" data-editor-action="view-front" title="Front view">Front</button>
+          <button type="button" data-editor-action="view-rear" title="Rear view">Rear</button>
+          <button type="button" data-editor-action="view-top" title="Top view">Top</button>
+        </span>
+        <button type="button" class="is-active" data-editor-action="mirror" title="Mirror left/right leg edits">Mirror</button>
+        <button type="button" data-editor-action="undo" title="Undo (Ctrl+Z)">Undo</button>
+        <button type="button" data-editor-action="revert" title="Revert to the loaded guide">Revert</button>
+        <button type="button" class="editor-save" data-editor-action="save" title="Save skeleton edits">Save Skeleton</button>
+      </div>
+      <p class="editor-status" data-editor-status></p>
+    `;
+    this.root.appendChild(panel);
+  }
+
+  handleEditorAction(action, button) {
+    if (action.startsWith("view-")) {
+      this.applyEditorViewPreset(action.slice(5));
+      return;
+    }
+    if (action === "mirror") {
+      this.editor.mirror = !this.editor.mirror;
+      button.classList.toggle("is-active", this.editor.mirror);
+      this.updateEditorStatus(this.editor.mirror ? "Mirroring left/right leg edits." : "Mirroring off.");
+      return;
+    }
+    if (action === "undo") {
+      this.editorUndo();
+      return;
+    }
+    if (action === "revert") {
+      this.pushEditorUndo();
+      this.editor.joints = this.cloneJoints(this.editor.initialJoints);
+      this.editor.dirty = false;
+      this.refreshEditorScene();
+      this.updateEditorStatus("Reverted to the loaded guide.");
+      return;
+    }
+    if (action === "save") {
+      this.saveEditorGuide(button);
+    }
+  }
+
+  applyEditorViewPreset(name) {
+    if (!this.frame) return;
+    const { center, radius } = this.frame;
+    const distance = (radius / Math.sin(THREE.MathUtils.degToRad(this.camera.fov * 0.5))) * 1.05;
+    // Canonical: +X is the animal's left, +Y is forward (three.js +Z), +Z is up (three.js +Y).
+    const directions = {
+      left: new THREE.Vector3(1, 0.02, 0),
+      right: new THREE.Vector3(-1, 0.02, 0),
+      front: new THREE.Vector3(0, 0.02, 1),
+      rear: new THREE.Vector3(0, 0.02, -1),
+      top: new THREE.Vector3(0, 1, 0.02),
+    };
+    const direction = directions[name];
+    if (!direction) return;
+    this.camera.position.copy(center).add(direction.clone().normalize().multiplyScalar(distance));
+    this.controls.target.copy(center);
+    this.controls.update();
+    this.rememberCamera();
+  }
+
+  pickEditorJoint(event) {
+    const editor = this.editor;
+    const bounds = this.renderer.domElement.getBoundingClientRect();
+    editor.pointer.set(
+      ((event.clientX - bounds.left) / bounds.width) * 2 - 1,
+      -((event.clientY - bounds.top) / bounds.height) * 2 + 1,
+    );
+    editor.raycaster.setFromCamera(editor.pointer, this.camera);
+    const hits = editor.raycaster.intersectObjects([...editor.jointMeshes.values()], false);
+    return hits.length ? hits[0].object.userData.jointName : "";
+  }
+
+  onEditorPointerDown(event) {
+    if (!this.editor || event.button !== 0) return;
+    const jointName = this.pickEditorJoint(event);
+    if (!jointName) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    this.renderer.domElement.setPointerCapture?.(event.pointerId);
+    this.pushEditorUndo();
+    this.editor.dragJoint = jointName;
+    this.controls.enabled = false;
+    const jointScene = this.editor.jointMeshes.get(jointName).position;
+    const normal = this.camera.getWorldDirection(new THREE.Vector3());
+    this.editor.dragPlane.setFromNormalAndCoplanarPoint(normal, jointScene);
+    this.showEditorJoint(jointName);
+  }
+
+  onEditorPointerMove(event) {
+    const editor = this.editor;
+    if (!editor) return;
+    if (!editor.dragJoint) {
+      const hover = this.pickEditorJoint(event);
+      if (hover !== editor.hoverJoint) {
+        editor.hoverJoint = hover;
+        this.renderer.domElement.style.cursor = hover ? "grab" : "";
+        if (hover) this.showEditorJoint(hover);
+      }
+      return;
+    }
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    const bounds = this.renderer.domElement.getBoundingClientRect();
+    editor.pointer.set(
+      ((event.clientX - bounds.left) / bounds.width) * 2 - 1,
+      -((event.clientY - bounds.top) / bounds.height) * 2 + 1,
+    );
+    editor.raycaster.setFromCamera(editor.pointer, this.camera);
+    const hit = new THREE.Vector3();
+    if (!editor.raycaster.ray.intersectPlane(editor.dragPlane, hit)) return;
+    const canonical = this.sceneToCanonical(hit);
+    editor.joints.get(editor.dragJoint).copy(canonical);
+    if (editor.mirror) {
+      const counterpart = mirrorJointName(editor.dragJoint);
+      if (counterpart && editor.joints.has(counterpart)) {
+        editor.joints.get(counterpart).set(-canonical.x, canonical.y, canonical.z);
+      }
+    }
+    editor.dirty = true;
+    this.refreshEditorScene();
+  }
+
+  onEditorPointerUp(event) {
+    if (!this.editor) return;
+    if (this.editor.dragJoint) {
+      this.renderer.domElement.releasePointerCapture?.(event.pointerId);
+      this.editor.dragJoint = "";
+      this.controls.enabled = true;
+      this.updateEditorStatus("Unsaved skeleton edits. Save before exporting.");
+    }
+  }
+
+  pushEditorUndo() {
+    const editor = this.editor;
+    editor.undoStack.push(this.cloneJoints(editor.joints));
+    if (editor.undoStack.length > 60) editor.undoStack.shift();
+  }
+
+  editorUndo() {
+    const editor = this.editor;
+    if (!editor?.undoStack.length) {
+      this.updateEditorStatus("Nothing to undo.");
+      return;
+    }
+    editor.joints = editor.undoStack.pop();
+    editor.dirty = true;
+    this.refreshEditorScene();
+    this.updateEditorStatus("Undid the last edit.");
+  }
+
+  async saveEditorGuide(button) {
+    const editor = this.editor;
+    button.disabled = true;
+    this.updateEditorStatus("Saving skeleton edits");
+    try {
+      const response = await fetch(this.guideApiUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ guide_bones: this.serializeGuideBones() }),
+      });
+      const payload = await response.json();
+      if (!response.ok || payload?.error) throw new Error(payload?.error || `Save returned HTTP ${response.status}`);
+      editor.dirty = false;
+      editor.initialJoints = this.cloneJoints(editor.joints);
+      this.updateEditorStatus("Skeleton saved. Export Verified Label is now Blender-free.");
+      window.dispatchEvent(new CustomEvent("nito-guide-saved", { detail: { sampleId: this.sampleId } }));
+    } catch (error) {
+      this.updateEditorStatus(`Save failed: ${error.message}`);
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  showEditorJoint(jointName) {
+    const label = this.root.querySelector("[data-editor-joint]");
+    if (!label) return;
+    const hint = guideJointHint(jointName);
+    label.textContent = hint ? `${guideJointLabel(jointName)} - ${hint}` : guideJointLabel(jointName);
+  }
+
+  updateEditorStatus(message) {
+    const status = this.root.querySelector("[data-editor-status]");
+    if (status) status.textContent = message;
+  }
+
+  hasUnsavedEdits() {
+    // Any open editor counts: re-rendering the page would tear down the session.
+    return Boolean(this.editor);
+  }
+
   resize() {
     const bounds = this.host.getBoundingClientRect();
     const width = Math.max(1, Math.floor(bounds.width));
@@ -609,6 +1103,9 @@ class NitoThreeViewport {
 
   dispose() {
     this.disposed = true;
+    window.removeEventListener("keydown", this.editorKeyHandler);
+    this.disableSkeletonEditor();
+    activeViewers.delete(this);
     this.rememberCamera();
     this.resizeObserver?.disconnect();
     this.controls?.dispose();
@@ -619,12 +1116,23 @@ class NitoThreeViewport {
   }
 }
 
+const activeViewers = new Set();
+
 function mountAll(container = document) {
   container.querySelectorAll(".three-editor").forEach((root) => {
     if (mountedViewers.has(root)) return;
-    mountedViewers.set(root, new NitoThreeViewport(root));
+    const viewer = new NitoThreeViewport(root);
+    mountedViewers.set(root, viewer);
+    activeViewers.add(viewer);
   });
 }
 
-window.NitoThreeViewer = { mountAll };
+function hasActiveEdits() {
+  for (const viewer of activeViewers) {
+    if (document.body.contains(viewer.root) && viewer.hasUnsavedEdits()) return true;
+  }
+  return false;
+}
+
+window.NitoThreeViewer = { mountAll, hasActiveEdits };
 window.dispatchEvent(new CustomEvent("nito-three-ready"));

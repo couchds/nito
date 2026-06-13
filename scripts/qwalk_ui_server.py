@@ -23,6 +23,9 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from qwalk_label_common import validate_guide_bones
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 WEB_ROOT = REPO_ROOT / "web"
@@ -46,6 +49,7 @@ COMMAND_TIMEOUT_SECONDS = {
     "poll-tripo": 20 * 60,
     "prepare-label-work": 15 * 60,
     "export-verified": 15 * 60,
+    "extract-guide": 10 * 60,
     "run-batch": 60 * 60,
     "train-guide-initializer": 12 * 60 * 60,
 }
@@ -56,6 +60,7 @@ SAMPLE_ACTION_STATUS = {
     "poll-tripo": "tripo_polling",
     "prepare-label-work": "label_work_running",
     "export-verified": "verified_export_running",
+    "extract-guide": "guide_extract_running",
     "run-pipeline": "pipeline_running",
 }
 DEFAULT_VIEW_INSTRUCTIONS = {
@@ -511,6 +516,104 @@ class WorkflowStore:
             "bone_count": len(guide_bones),
         }
 
+    def sample_state_file(self, sample_id_value: str) -> tuple[str, Path]:
+        sample_id = safe_token(sample_id_value, "")
+        if not sample_id or sample_id != sample_id_value:
+            raise ValueError("Invalid sample id.")
+        state_file = self.work_root / sample_id / "workflow_state.json"
+        if not state_file.exists():
+            raise ValueError(f"Sample not found: {sample_id}")
+        return sample_id, state_file
+
+    def guide_paths(self, state: dict[str, Any], sample_id: str) -> tuple[Path, Path, Path]:
+        directory = self.work_root / sample_id
+        candidate = Path(str(state.get("guide_candidate_json") or "")).expanduser()
+        if not candidate.is_file():
+            candidate = directory / f"{sample_id}_guide_candidate.json"
+        mesh = Path(str(state.get("canonical_mesh_obj") or "")).expanduser()
+        if not mesh.is_file():
+            mesh = directory / f"{sample_id}_canonical_mesh.obj"
+        edits = directory / "web_guide_edits.json"
+        return candidate, mesh, edits
+
+    def guide_mesh_url(self, state: dict[str, Any], sample_id: str, mesh: Path) -> str:
+        if mesh.is_file():
+            return self.artifact_url(str(mesh))
+        exported = self.exported_label_path(state, sample_id)
+        if exported and exported.with_suffix(".obj").is_file():
+            return self.artifact_url(str(exported.with_suffix(".obj")))
+        return ""
+
+    def guide_payload(self, state: dict[str, Any], sample_id: str) -> dict[str, Any]:
+        candidate, mesh, edits = self.guide_paths(state, sample_id)
+        has_guide = candidate.is_file() or edits.is_file() or bool(self.exported_label_path(state, sample_id))
+        mesh_url = self.guide_mesh_url(state, sample_id, mesh)
+        return {
+            "editable": bool(mesh_url and has_guide),
+            "edited": edits.is_file(),
+            "edited_at": int(state.get("web_guide_edited_at") or 0),
+            "extractable": self.state_path_exists(state.get("label_work_blend")),
+            "mesh_url": mesh_url,
+            "api_url": f"/api/samples/{quote(sample_id)}/guide",
+        }
+
+    def sample_guide(self, sample_id_value: str) -> dict[str, Any]:
+        sample_id, state_file = self.sample_state_file(sample_id_value)
+        state = read_json(state_file, {})
+        candidate, mesh, edits = self.guide_paths(state, sample_id)
+
+        guide_bones = None
+        source = ""
+        if edits.is_file():
+            guide_bones = read_json(edits, {}).get("guide_bones")
+            source = "web_edits"
+        if not guide_bones and candidate.is_file():
+            guide_bones = read_json(candidate, {}).get("guide_bones")
+            source = "candidate"
+        if not guide_bones:
+            exported = self.exported_label_path(state, sample_id)
+            if exported:
+                guide_bones = read_json(exported, {}).get("guide_bones")
+                source = "exported_label"
+        if not guide_bones:
+            raise ValueError(
+                "No editable guide found for this sample. Run Blender prep or the Extract Guide action first."
+            )
+
+        return {
+            "sample_id": sample_id,
+            "source": source,
+            "coordinate_space": "canonical",
+            "mesh_forward_axis": "POS_Y",
+            "mesh_url": self.guide_mesh_url(state, sample_id, mesh),
+            "guide_bones": guide_bones,
+            "edited_at": int(state.get("web_guide_edited_at") or 0),
+        }
+
+    def save_sample_guide(self, sample_id_value: str, payload: dict[str, Any]) -> dict[str, Any]:
+        sample_id, state_file = self.sample_state_file(sample_id_value)
+        guide_bones = validate_guide_bones(payload.get("guide_bones") or {})
+        now = int(time.time())
+        edits_path = self.work_root / sample_id / "web_guide_edits.json"
+        write_json(
+            edits_path,
+            {
+                "coordinate_space": "canonical",
+                "mesh_forward_axis": "POS_Y",
+                "source": "nito_web_editor",
+                "saved_at": now,
+                "guide_bones": guide_bones,
+            },
+        )
+        state = read_json(state_file, {})
+        state["web_guide_edits"] = str(edits_path)
+        state["web_guide_edited_at"] = now
+        if state.get("status") in {"candidate_review_rendered", "label_work_prepared"}:
+            state["status"] = "guide_edited_web"
+        state["updated_at"] = now
+        write_json(state_file, state)
+        return {"sample_id": sample_id, "saved_at": now, "edits_file": str(edits_path)}
+
     def sample_states(self) -> list[dict[str, Any]]:
         self.refresh_stale_jobs()
         samples: list[dict[str, Any]] = []
@@ -582,6 +685,7 @@ class WorkflowStore:
                     "model_url": model_url,
                     "review_dir": state.get("review_dir", ""),
                     "label_work_blend": state.get("label_work_blend", ""),
+                    "guide": self.guide_payload(state, sample_id),
                 }
             )
         samples.sort(key=lambda item: (item.get("updated_at") or 0, item["sample_id"]), reverse=True)
@@ -1201,6 +1305,16 @@ class WorkflowStore:
                     "--verified",
                 )
             ]
+        elif action == "extract-guide":
+            commands = [
+                self.workflow_command(
+                    "extract-guide",
+                    "--sample-id",
+                    sample_id,
+                    "--blender",
+                    self.blender_path(),
+                )
+            ]
         elif action == "run-pipeline":
             face_limit = self.face_limit_for_payload(payload)
             job_payload["faceLimit"] = face_limit
@@ -1568,6 +1682,15 @@ class QWalkUIHandler(BaseHTTPRequestHandler):
             )
         elif parsed.path == "/api/jobs":
             self.send_json({"jobs": self.store.jobs()})
+        elif parsed.path.startswith("/api/samples/") and parsed.path.endswith("/guide"):
+            parts = parsed.path.strip("/").split("/")
+            if len(parts) != 4 or parts[0] != "api" or parts[1] != "samples" or parts[3] != "guide":
+                self.send_error(404, "Not found")
+                return
+            try:
+                self.send_json(self.store.sample_guide(unquote(parts[2])))
+            except Exception as error:
+                self.send_json({"error": str(error)}, status=400)
         elif parsed.path.startswith("/api/jobs/"):
             job_id = parsed.path.rsplit("/", 1)[-1]
             job = self.store.job(job_id)
@@ -1633,6 +1756,14 @@ class QWalkUIHandler(BaseHTTPRequestHandler):
                     return
                 sample_id = unquote(parts[2])
                 result = self.store.add_sample_to_batch(sample_id, payload)
+                self.send_json(result)
+            elif parsed.path.startswith("/api/samples/") and parsed.path.endswith("/guide"):
+                parts = parsed.path.strip("/").split("/")
+                if len(parts) != 4 or parts[0] != "api" or parts[1] != "samples" or parts[3] != "guide":
+                    self.send_error(404, "Not found")
+                    return
+                sample_id = unquote(parts[2])
+                result = self.store.save_sample_guide(sample_id, payload)
                 self.send_json(result)
             elif parsed.path.startswith("/api/samples/") and "/actions/" in parsed.path:
                 parts = parsed.path.strip("/").split("/")
